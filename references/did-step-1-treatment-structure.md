@@ -5,11 +5,15 @@
 - [Master Profiling Function](#master-profiling-function)
 - [Treatment Pattern Examples](#treatment-pattern-examples)
 - [Panel Integrity Checks](#panel-integrity-checks)
+  - [Check 4: Sentinel Value Detection](#check-4-sentinel-value-detection)
+  - [Check 5: Already-Treated-Before-Sample Detection](#check-5-already-treated-before-sample-detection)
+  - [Check 6: Treatment Timing Beyond Sample Range](#check-6-treatment-timing-beyond-sample-range)
 - [Never-Treated Coding Conversion](#never-treated-coding-conversion)
 - [Cohort Size Summary Table](#cohort-size-summary-table)
 - [Treatment Rollout Visualization](#treatment-rollout-visualization)
 - [Complete Step 1 Workflow Example](#complete-step-1-workflow-example)
 - [Decision Routing Summary](#decision-routing-summary)
+- [Multi-Level Treatment Structure](#multi-level-treatment-structure)
 - [Packages Used Next](#packages-used-next)
 - [Read Next](#read-next)
 
@@ -166,7 +170,10 @@ profile_did_design <- function(data, id_var, time_var, treat_timing_var, treat_v
     }
     if (!is_balanced) {
       cat("\n  WARNING: Unbalanced panel.\n")
-      cat("  -> BJS (didimputation) requires a balanced panel; balance first or skip BJS.\n")
+      cat("  -> CS (did): Handles unbalanced panels automatically (drops incomplete unit-time cells).\n")
+      cat("  -> SA (fixest): Handles unbalanced panels (uses available observations).\n")
+      cat("  -> BJS (didimputation): REQUIRES balanced panel; balance first or skip BJS.\n")
+      cat("  -> Gardner (did2s): Handles unbalanced panels.\n")
     }
     route <- "STAGGERED"
   }
@@ -342,6 +349,92 @@ check_panel_balance <- function(data, id_var, time_var) {
 }
 ```
 
+### Check 4: Sentinel Value Detection
+
+Treatment timing variables often use sentinel values (e.g., `gname = 2000` when the sample ends in 1998) to encode never-treated units. These can silently create phantom cohorts.
+
+```r
+check_sentinel_values <- function(data, id_var, time_var, treat_timing_var) {
+  g <- data[[treat_timing_var]]
+  time_range <- range(data[[time_var]], na.rm = TRUE)
+
+  # Get unique gname values (excluding NA, 0, Inf)
+  g_vals <- unique(g[!is.na(g) & g != 0 & !is.infinite(g)])
+
+  # Flag values outside the sample time range
+  out_of_range <- g_vals[g_vals < time_range[1] | g_vals > time_range[2]]
+
+  if (length(out_of_range) > 0) {
+    warning(sprintf(
+      "Possible sentinel values in '%s': %s\n  Sample time range: [%s, %s]\n  These may be never-treated units coded with an out-of-range value.\n  Recode to 0/NA/Inf before estimation.",
+      treat_timing_var, paste(out_of_range, collapse = ", "),
+      time_range[1], time_range[2]))
+  } else {
+    cat("OK: All treatment timing values are within the sample time range.\n")
+  }
+  invisible(out_of_range)
+}
+```
+
+### Check 5: Already-Treated-Before-Sample Detection
+
+Units treated at or before the first observed period are "always treated" within the sample. Including them creates extremely long pre-treatment windows, collinearity, and non-PSD covariance matrices.
+
+```r
+check_already_treated <- function(data, id_var, time_var, treat_timing_var) {
+  min_time <- min(data[[time_var]], na.rm = TRUE)
+
+  # Get one gname per unit
+  unit_g <- tapply(data[[treat_timing_var]], data[[id_var]], function(x) {
+    vals <- unique(x[!is.na(x) & x != 0 & !is.infinite(x)])
+    if (length(vals) == 0) return(NA_real_)
+    vals[1]
+  })
+
+  already <- names(unit_g)[!is.na(unit_g) & unit_g <= min_time]
+
+  if (length(already) > 0) {
+    warning(sprintf(
+      "%d unit(s) treated at or before first period (%s): %s\n  These are 'always treated' in the sample. Options:\n  1. Reclassify as never-treated (gname = 0/NA/Inf) and exclude from treatment\n  2. Drop them entirely\n  Consequences if included: long noisy leads, collinearity, non-PSD VCOV.",
+      length(already), min_time,
+      paste(head(already, 5), collapse = ", ")))
+  } else {
+    cat("OK: No units treated before the sample begins.\n")
+  }
+  invisible(already)
+}
+```
+
+### Check 6: Treatment Timing Beyond Sample Range
+
+Units with `gname` values after the last observed period are effectively never-treated within the sample — they are never observed in a treated state. Including them as a separate "treated" cohort creates a phantom cohort with no post-treatment observations, which can cause estimation failures or misleading results.
+
+```r
+check_future_treatment <- function(data, id_var, time_var, treat_timing_var) {
+  max_time <- max(data[[time_var]], na.rm = TRUE)
+  g <- data[[treat_timing_var]]
+
+  # Get one gname per unit (excluding never-treated)
+  unit_g <- tapply(g, data[[id_var]], function(x) {
+    vals <- unique(x[!is.na(x) & x != 0 & !is.infinite(x)])
+    if (length(vals) == 0) return(NA_real_)
+    vals[1]
+  })
+
+  future <- names(unit_g)[!is.na(unit_g) & unit_g > max_time]
+
+  if (length(future) > 0) {
+    warning(sprintf(
+      "%d unit(s) have treatment timing after the last observed period (%s).\n  These units are never observed as treated. Recode to never-treated\n  (gname = 0/NA/Inf) before estimation, or they create a phantom cohort.\n  Affected units (first 5): %s",
+      length(future), max_time,
+      paste(head(future, 5), collapse = ", ")))
+  } else {
+    cat("OK: All treatment timing values are within or before the sample range.\n")
+  }
+  invisible(future)
+}
+```
+
 ---
 
 ## Never-Treated Coding Conversion
@@ -399,8 +492,22 @@ cohort_summary <- function(data, id_var, treat_timing_var) {
   )
   cat("Cohort Size Summary:\n")
   print(df_out, row.names = FALSE)
-  cat(sprintf("\nSmallest treated cohort: %d units\n",
-              min(df_out$n_units[df_out$label == "treated"])))
+  smallest <- min(df_out$n_units[df_out$label == "treated"])
+  cat(sprintf("\nSmallest treated cohort: %d units\n", smallest))
+
+  if (smallest < 5) {
+    small_cohorts <- df_out$cohort[df_out$label == "treated" & df_out$n_units < 5]
+    cat(sprintf("\nWARNING: Cohort(s) %s have fewer than 5 units.\n",
+                paste(small_cohorts, collapse = ", ")))
+    cat("  Downstream consequences:\n")
+    cat("  - SA (fixest::sunab) likely unstable: non-PSD VCOV, collinearity drops\n")
+    cat("  - CS event study: compositional effects at extreme event times\n")
+    cat("    (only small late-adopter cohorts contribute to long leads/lags)\n")
+    cat("  - Power analysis (Step 4): noisy long-lead estimates distort slope_for_power()\n")
+    cat("  - HonestDiD (Step 5): inflated baseline violation from thin-period noise\n")
+    cat("  Consider: merge small cohorts, restrict event window, or prefer CS/Gardner.\n")
+    cat("  See: 'Compositional Effects in CS Dynamic Aggregation' in Step 3.\n")
+  }
 
   invisible(df_out)
 }
@@ -473,6 +580,8 @@ data(mpdta)
 check_panel_uniqueness(mpdta, "countyreal", "year")
 check_timing_consistency(mpdta, "countyreal", "first.treat")
 check_panel_balance(mpdta, "countyreal", "year")
+check_sentinel_values(mpdta, "countyreal", "year", "first.treat")
+check_already_treated(mpdta, "countyreal", "year", "first.treat")
 
 # 2. Profile treatment structure
 profile <- profile_did_design(mpdta, "countyreal", "year", "first.treat")
@@ -510,6 +619,36 @@ if (profile$route == "STAGGERED") {
 | Reversible / switches on-off | Either | No | Advanced methods | `DIDmultiplegt`, `DIDmultiplegtDYN`, `etwfe` |
 | Continuous / multi-valued | Either | Either | Advanced methods | `DIDmultiplegt`, `DIDmultiplegtDYN` |
 | Synthetic control hybrid | Yes | Yes | Advanced methods | `gsynth`, `synthdid` |
+
+## Multi-Level Treatment Structure
+
+When treatment is assigned at a higher level than the units of observation (e.g., state-level policy evaluated with county-level data), special considerations apply.
+
+### When Does This Arise?
+
+- **State-level policy, county-level outcomes** (e.g., Medicaid expansion → county mortality)
+- **School-district policy, student-level outcomes**
+- **Firm-level treatment, worker-level data**
+
+### Key Implications
+
+1. **Clustering**: Standard errors must be clustered at the **treatment-assignment level** (e.g., state), not the unit level (e.g., county). This is critical — clustering at the unit level ignores the within-cluster correlation from common treatment and produces anti-conservative inference.
+
+2. **Effective sample size**: The number of independent observations for inference is the **number of clusters** (e.g., 51 states), not the number of units (e.g., 3,064 counties). Few-cluster problems arise when treated clusters < 30.
+
+3. **Per-estimator clustering syntax:**
+
+| Estimator | Parameter | Multi-Level Example |
+|-----------|-----------|-------------------|
+| CS (`did`) | `clustervars` | `att_gt(..., clustervars = "state_id")` |
+| SA (`fixest`) | `cluster` | `feols(..., cluster = ~state_id)` |
+| BJS (`didimputation`) | `cluster_var` | `did_imputation(..., cluster_var = "state_id")` |
+| Gardner (`did2s`) | `cluster_var` | `did2s(..., cluster_var = "state_id")` |
+| Staggered | — | No explicit clustering; uses analytical SEs |
+
+4. **Aggregation option**: When treatment is at the state level, you can aggregate outcomes to the state level (using population weights) before estimation. This simplifies analysis and avoids few-cluster issues but changes the estimand (state-average effect vs. county-level effect).
+
+> See "Clustering Standard Errors" in `did-step-3-estimation.md` for detailed syntax, few-cluster diagnostics, and wild cluster bootstrap examples.
 
 ## Packages Used Next
 

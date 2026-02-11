@@ -108,6 +108,32 @@ df_balanced <- df %>% complete(unit_id, year)
 cs_agg <- aggte(cs_out, type = "dynamic", na.rm = TRUE)
 ```
 
+### Singular covariance matrix in downstream analysis
+
+```
+Not returning pre-test Wald statistic due to singular covariance matrix
+```
+
+**Cause**: Some cohort-time cells produce zero or NA standard errors (usually from singleton cohorts), making `diag(se^2)` singular. This affects pretrends power analysis and HonestDiD sensitivity.
+
+**Diagnosis**:
+```r
+cs_es <- aggte(cs_out, type = "dynamic")
+# Check for zero/NA SEs
+cat("Zero SEs:", sum(cs_es$se == 0, na.rm = TRUE), "\n")
+cat("NA SEs:", sum(is.na(cs_es$se)), "\n")
+```
+
+**Fix**: Filter to valid periods before constructing the covariance matrix:
+```r
+valid <- !is.na(cs_es$se) & cs_es$se > 0
+betahat <- cs_es$att.egt[valid]
+tVec <- as.numeric(cs_es$egt[valid])
+sigma <- diag(cs_es$se[valid]^2)
+```
+
+If many periods are dropped, consider merging small treatment cohorts before estimation.
+
 ---
 
 ## 2. fixest (Sun-Abraham)
@@ -169,6 +195,41 @@ check_conv_feols(sa_out)
 
 # If convergence is poor, increase iterations
 sa_out <- feols(..., demeaning_algo = demeaning_algo(iter = 10000))
+```
+
+### VCOV not positive semi-definite
+
+```
+The VCOV matrix is not positive semi-definite and was 'fixed' (see ?vcov)
+```
+
+**Cause**: Small or singleton treatment cohorts produce near-collinear regressors. fixest replaces negative eigenvalues with zero, but this "fix" means some SEs may be exactly 0.000 and the covariance matrix is unreliable for downstream analysis (HonestDiD, pretrends).
+
+**Diagnosis**:
+```r
+# Check cohort sizes
+cohort_sizes <- table(df$cohort[!duplicated(df$unit_id) & df$cohort > 0])
+print(cohort_sizes)  # look for cohorts with < 5 units
+```
+
+**Fixes**:
+```r
+# Fix 1: Merge small cohorts into neighboring ones
+small <- as.numeric(names(cohort_sizes[cohort_sizes < 5]))
+for (sc in small) {
+  nearest <- as.numeric(names(cohort_sizes))[which.min(abs(as.numeric(names(cohort_sizes)) - sc))]
+  if (nearest != sc) df$cohort[df$cohort == sc] <- nearest
+}
+
+# Fix 2: Restrict event window to reduce rank deficiency
+iplot(sa_out, xlim = c(-10, 15))
+
+# Fix 3: Use heteroskedasticity-robust instead of cluster-robust SEs
+vcov(sa_out, "hetero")
+
+# Fix 4: Switch to CS (did) — handles small cohorts more gracefully
+cs_out <- att_gt(yname = "y", tname = "t", idname = "id",
+                 gname = "g", data = df, control_group = "notyettreated")
 ```
 
 ---
@@ -330,6 +391,46 @@ cat(sprintf("numPrePeriods: %d, numPostPeriods: %d, sum: %d\n",
             numPrePeriods, numPostPeriods, numPrePeriods + numPostPeriods))
 # These must be equal
 ```
+
+### "CI is open at one of the endpoints; CI length may not be accurate"
+
+```
+Warning: CI is open at one of the endpoints; CI length may not be accurate
+```
+
+**Cause**: HonestDiD's optimization solver did not converge to a finite confidence interval endpoint. This typically occurs when:
+- The covariance matrix is diagonal (from CS `diag(se^2)` approximation) and poorly conditioned
+- `Mbar` values are very small, making the feasible set tight
+- Large pre-treatment violations make the optimization problem difficult
+
+**Diagnosis**: Check which `Mbar` values produce the warning:
+```r
+# Run with finer grid and inspect which entries have Inf endpoints
+results <- createSensitivityResults_relativeMagnitudes(
+  betahat = beta_sub, sigma = sigma_sub,
+  numPrePeriods = numPre, numPostPeriods = numPost,
+  Mbarvec = seq(0.5, 2, by = 0.5))
+print(results)
+# Look for rows where lb = -Inf or ub = Inf
+```
+
+**Fixes**:
+```r
+# Fix 1: Use a coarser Mbar grid (skip very small values)
+results <- createSensitivityResults_relativeMagnitudes(
+  ..., Mbarvec = seq(0.5, 2, by = 0.5))
+
+# Fix 2: Restrict to near pre-periods (reduces max violation baseline)
+# See "Pre-Period Selection for HonestDiD" in did-step-5-sensitivity-inference.md
+
+# Fix 3: Use SA or BJS for full VCOV instead of CS diagonal approximation
+# Full VCOV matrices are better conditioned for the optimizer
+
+# Fix 4: Regularize sigma (add small diagonal perturbation)
+sigma_reg <- sigma_sub + diag(1e-6, nrow(sigma_sub))
+```
+
+**Interpretation**: When the warning appears, the reported CI length is a **lower bound** — the true robust CI may be wider. Focus on `Mbar` values that produce finite endpoints. If all entries have open endpoints, the data may not support meaningful sensitivity bounds; report this limitation explicitly.
 
 ---
 

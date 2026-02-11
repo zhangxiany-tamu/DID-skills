@@ -7,13 +7,20 @@
 - [3. Borusyak-Jaravel-Spiess / BJS (didimputation)](#3-borusyak-jaravel-spiess--bjs-didimputation)
 - [4. Gardner Two-Stage (did2s)](#4-gardner-two-stage-did2s)
 - [5. Roth & Sant'Anna (staggered)](#5-roth--santanna-staggered)
+- [Restricting Event Study Windows](#restricting-event-study-windows)
+- [Compositional Effects in CS Dynamic Aggregation](#compositional-effects-in-cs-dynamic-aggregation)
 - [Multi-Estimator Comparison Template](#multi-estimator-comparison-template)
+  - [Interpreting Multi-Estimator Comparison](#interpreting-multi-estimator-comparison)
+  - [Diagnosing SA Ran But Is Biased](#diagnosing-sa-ran-but-is-biased)
+  - [Estimator Failure / Fallback Decision Tree](#estimator-failure--fallback-decision-tree)
 - [Common Pitfalls](#common-pitfalls)
+- [Clustering Standard Errors](#clustering-standard-errors)
 - [Iterative Parallel Trends Workflow](#iterative-parallel-trends-workflow)
   - [Step A: Assess Selection Mechanisms](#step-a-assess-selection-mechanisms)
   - [Step B: Estimate Without Covariates First](#step-b-estimate-without-covariates-first)
   - [Step C: Check Covariate Overlap](#step-c-check-covariate-overlap)
   - [Step D: Re-Estimate with Covariates](#step-d-re-estimate-with-covariates)
+  - [Covariate Syntax Across Estimators](#covariate-syntax-across-estimators)
   - [Step E: Formal Conditional Pre-Test](#step-e-formal-conditional-pre-test)
 
 This file covers the five core heterogeneity-robust estimators for staggered DiD with binary, absorbing treatment. For non-binary, reversible, or continuous treatments, see `did-advanced-methods.md`.
@@ -95,6 +102,16 @@ cs_group <- aggte(cs_out, type = "group")
 summary(cs_group)
 ```
 
+### With Sampling Weights
+
+```r
+# CS uses `weightsname` (not `weights`) — must be a column name string
+cs_wt <- att_gt(yname = "lemp", tname = "year", idname = "countyreal",
+                gname = "first.treat", data = mpdta,
+                control_group = "notyettreated",
+                weightsname = "pop_weight")
+```
+
 ---
 
 ## 2. Sun & Abraham (`fixest`)
@@ -146,6 +163,67 @@ iplot(sa_out,
 beta  <- coef(sa_out)
 sigma <- vcov(sa_out)
 ```
+
+> **Weights**: `feols(..., weights = ~W)` uses formula syntax (not a string).
+
+### Warning: Small or Singleton Cohorts
+
+SA becomes unstable when treatment cohorts contain very few units. Symptoms include non-PSD VCOV matrices, standard errors of exactly 0.000, wildly large SEs, and many variables dropped for collinearity.
+
+**Diagnostic check:**
+```r
+# Check cohort sizes (run before SA estimation)
+cohort_sizes <- table(df$cohort[!duplicated(df$unit_id) & df$cohort > 0 &
+                                 !is.na(df$cohort)])
+cat("Cohort sizes:\n"); print(cohort_sizes)
+small <- names(cohort_sizes[cohort_sizes < 5])
+if (length(small) > 0) {
+  warning(sprintf("Cohorts with < 5 units: %s\n  SA may be unreliable. Consider:\n  1. Merge small cohorts into neighboring ones\n  2. Drop singleton cohorts\n  3. Use CS (did) instead — more robust to small cohorts",
+                  paste(small, collapse = ", ")))
+}
+```
+
+**Remedies:**
+- **Merge**: Combine small cohorts with the nearest timing cohort
+- **Drop**: Remove singleton cohorts and re-estimate
+- **Switch**: Use CS (`att_gt()`) which handles small cohorts more gracefully via group-time ATT estimation
+
+> **SA instability is driven by T-to-cohort ratio, NOT total number of units.** A dataset with 3,000 counties but only 3 cohorts and 10 time periods has ratio 3.3 — marginal. Adding more units does not help; you need more time periods or fewer cohorts. Rule of thumb: T should be >= 3× treated cohorts. See the T-to-cohort ratio check below.
+
+### Warning: Insufficient Time Periods for SA
+
+SA also fails when there are too few time periods relative to cohorts — the `sunab()` interaction terms become rank-deficient even when cohorts are not small. **Rule of thumb**: T should be >= 3× the number of treated cohorts.
+
+```r
+# Check T-to-cohort ratio before running SA
+n_periods <- length(unique(df$time))
+n_cohorts <- length(unique(df$cohort[df$cohort > 0 & !is.na(df$cohort)]))
+ratio <- n_periods / n_cohorts
+cat(sprintf("Time periods: %d | Treated cohorts: %d | Ratio: %.1f\n",
+            n_periods, n_cohorts, ratio))
+if (ratio < 3) {
+  warning(sprintf(
+    "T/cohort ratio (%.1f) < 3. SA likely rank-deficient.\n  Use CS or Gardner instead.",
+    ratio))
+}
+```
+
+### Warning: Non-Positive-Semi-Definite VCOV
+
+If fixest reports `"The VCOV matrix is not positive semi-definite"`, it has replaced negative eigenvalues with zero. This affects downstream analysis:
+
+- **HonestDiD**: May produce unreliable sensitivity intervals (requires valid covariance)
+- **pretrends**: Power calculations may be distorted
+- **Standard errors**: Some SEs may be exactly 0.000 (from the eigenvalue fix)
+
+**Response strategies:**
+1. **Diagnose the cause**: Usually small/singleton cohorts or extreme collinearity. Check `cohort_sizes` above.
+2. **Merge or drop** problematic cohorts (see above)
+3. **Restrict the event window**: `iplot(sa_out, xlim = c(-10, 15))` — long leads from early adopters cause rank-deficiency
+4. **Use heteroskedasticity-robust SEs**: `vcov(sa_out, "hetero")` instead of cluster-robust
+5. **Switch estimator**: CS provides valid SEs even with small cohorts
+
+> See `references/did-troubleshooting.md` for the full troubleshooting entry.
 
 ### Multiple Specifications
 ```r
@@ -235,6 +313,15 @@ bjs_es <- did_imputation(
   tname = "year", idname = "unit_id",
   horizon = TRUE, pretrends = -5:-1)
 print(bjs_es)
+```
+
+### With Sampling Weights
+
+```r
+bjs_wt <- did_imputation(
+  data = dt, yname = "outcome", gname = "first_treat",
+  tname = "year", idname = "unit_id",
+  wname = "pop_weight")
 ```
 
 ---
@@ -378,6 +465,110 @@ for (est in c("simple", "cohort", "calendar")) {
 }
 ```
 
+> **Weights**: `staggered()` does not support sampling weights. If population weighting is needed, use CS (`weightsname`) or Gardner (`weights`).
+
+## Restricting Event Study Windows
+
+With early adopters or long panels, default event studies can span 30+ periods with unreliable extreme leads/lags. Restrict the window for each estimator:
+
+**SA (fixest):** Restrict the plot window (coefficients are still estimated for all periods):
+```r
+iplot(sa_out, xlim = c(-10, 15))
+```
+
+**CS (did):** Use `min_e` / `max_e` in `aggte()` to restrict aggregation:
+```r
+cs_es <- aggte(cs_out, type = "dynamic", min_e = -10, max_e = 15)
+ggdid(cs_es)
+```
+
+**Gardner (did2s):** Recode extreme relative times to `Inf` before estimation so they are absorbed into the reference category:
+```r
+df$rel_time <- ifelse(df$first_treat > 0, df$year - df$first_treat, Inf)
+df$rel_time[df$rel_time < -10 | df$rel_time > 15] <- Inf
+gardner_es <- did2s(
+  data = df, yname = "outcome",
+  first_stage = ~ 0 | unit_id + year,
+  second_stage = ~ i(rel_time, ref = c(-1, Inf)),
+  treatment = "treat", cluster_var = "unit_id")
+```
+
+> **Rule of thumb**: Set the window to cover the range where most cohorts have data. Periods with only one or two cohorts contributing produce noisy estimates.
+
+---
+
+## Compositional Effects in CS Dynamic Aggregation
+
+When `aggte(type = "dynamic")` produces an event study, it averages group-time ATTs across all cohorts observed at each event time. The **composition of contributing cohorts changes across event times**: at extreme leads, only late adopters contribute, while near the treatment date, all cohorts contribute. This compositional shift can produce spurious significant pre-trends at long leads, inflate F-tests, distort power analysis (Step 4), and inflate HonestDiD's baseline violation (Step 5).
+
+### Diagnosing Composition
+
+```r
+diagnose_composition <- function(cs_out) {
+  # cs_out: output from att_gt()
+  gt <- data.frame(group = cs_out$group, t = cs_out$t)
+  gt$e <- gt$t - gt$group  # event time
+
+  event_times <- sort(unique(gt$e))
+  cat("Event Time | # Cohorts | Cohorts Contributing\n")
+  cat("-----------|-----------|---------------------\n")
+  thin <- integer()
+  for (e in event_times) {
+    cohorts <- sort(unique(gt$group[gt$e == e]))
+    flag <- if (length(cohorts) <= 2) " <-- THIN" else ""
+    cat(sprintf("%10d | %9d | %s%s\n", e, length(cohorts),
+                paste(cohorts, collapse = ", "), flag))
+    if (length(cohorts) <= 2) thin <- c(thin, e)
+  }
+  if (length(thin) > 0) {
+    cat(sprintf("\nWARNING: %d event times have <= 2 cohorts contributing.\n",
+                length(thin)))
+    cat("Estimates at these event times are dominated by 1-2 cohorts and may be noisy.\n")
+    cat("Downstream consequences:\n")
+    cat("  - F-tests (Step 4) may reject due to compositional artifacts, not real violations\n")
+    cat("  - Power analysis (Step 4) is distorted by noisy long-lead estimates\n")
+    cat("  - HonestDiD (Step 5) baseline violation is inflated by thin-period noise\n")
+  }
+  invisible(list(event_times = event_times, thin = thin))
+}
+```
+
+### Remedy 1: Balanced Composition with `balance_e`
+
+Use `balance_e` to restrict the event study to event times where all included cohorts contribute. This ensures stable composition but **drops cohorts that don't span the full window**:
+
+```r
+# Only include event times where the composition is constant
+cs_es_bal <- aggte(cs_out, type = "dynamic", balance_e = -5)
+ggdid(cs_es_bal, title = "Balanced Composition (balance_e = -5)")
+```
+
+> **Tradeoff**: `balance_e = X` drops cohorts with fewer than `|X|` pre-treatment periods. With very different adoption dates, this can exclude most late adopters. Check how many cohorts remain.
+
+### Remedy 2: Restrict Event Window with `min_e` / `max_e`
+
+A lighter-touch approach: keep all cohorts but truncate the event study to the range where most cohorts have data (see "Restricting Event Study Windows" above):
+
+```r
+cs_es_trim <- aggte(cs_out, type = "dynamic", min_e = -5, max_e = 5)
+ggdid(cs_es_trim, title = "Trimmed Window (min_e=-5, max_e=5)")
+```
+
+### Decision Tree: Significant Pre-Trends at Long Leads
+
+```
+Pre-trends significant?
+├─ All pre-periods significant → PT likely violated. Use HonestDiD conservatively.
+├─ Only long leads significant → Run diagnose_composition().
+│   ├─ Those leads are THIN (1-2 cohorts)
+│   │   → Compositional artifact. Restrict window with min_e/max_e or balance_e.
+│   │     Run F-test and HonestDiD on restricted window (Steps 4-5).
+│   │     Report both full and restricted results.
+│   └─ Composition is stable at those leads
+│       → Genuine concern. Report both analyses, discuss credibility.
+└─ None significant → Check power (Step 4). Proceed to HonestDiD (Step 5).
+```
+
 ---
 
 ## Multi-Estimator Comparison Template
@@ -432,6 +623,130 @@ run_did_comparison <- function(df, yname, tname, idname, gname) {
 }
 ```
 
+### Interpreting Multi-Estimator Comparison
+
+After running `run_did_comparison()`, check for large discrepancies:
+
+```r
+interpret_comparison <- function(results) {
+  if (nrow(results) < 2) {
+    cat("Only one estimator succeeded. Cannot compare.\n")
+    return(invisible(NULL))
+  }
+  atts <- results$ATT
+  range_att <- diff(range(atts))
+  mean_att <- mean(atts)
+  cv <- if (abs(mean_att) > 0) range_att / abs(mean_att) else Inf
+
+  cat(sprintf("ATT range: [%.4f, %.4f] (spread: %.4f)\n",
+              min(atts), max(atts), range_att))
+  if (cv > 0.5) {
+    cat("WARNING: Large discrepancy (>50% of mean). Investigate:\n")
+    cat("  - Different control groups or weighting schemes\n")
+    cat("  - Small/singleton cohorts destabilizing some estimators\n")
+    cat("  - Panel imbalance affecting BJS\n")
+  } else if (cv > 0.2) {
+    cat("CAUTION: Moderate discrepancy. Report all estimates.\n")
+  } else {
+    cat("Results are consistent across estimators.\n")
+  }
+
+  # Check for sign disagreement with all insignificant estimates
+  ses <- results$SE
+  has_se <- !is.na(ses) & ses > 0
+  if (sum(has_se) >= 2) {
+    sig <- abs(atts[has_se]) / ses[has_se] > 1.96
+    if (!any(sig) && length(unique(sign(atts))) > 1) {
+      cat("NOTE: All estimates are insignificant AND disagree in sign.\n")
+      cat("  The data cannot distinguish the direction of the effect.\n")
+      cat("  Do NOT interpret the sign. Focus on confidence intervals\n")
+      cat("  and power analysis (Step 4) to assess informativeness.\n")
+    }
+  }
+}
+```
+
+### Diagnosing SA Ran But Is Biased
+
+When SA produces results without errors but disagrees with CS/Gardner, the issue is usually estimation instability rather than genuine treatment effect heterogeneity. Use this diagnostic:
+
+```r
+diagnose_sa_reliability <- function(sa_model, cs_overall_att) {
+  sigma <- vcov(sa_model)
+  beta  <- coef(sa_model)
+  issues <- character()
+
+  # 1. VCOV positive semi-definiteness
+  eig <- eigen(sigma, symmetric = TRUE, only.values = TRUE)$values
+  if (any(eig <= 0)) issues <- c(issues, "Non-PSD VCOV (negative eigenvalues)")
+
+  # 2. Zero standard errors
+  se <- sqrt(diag(sigma))
+  n_zero <- sum(se < 1e-10)
+  if (n_zero > 0) issues <- c(issues, sprintf("%d zero SEs (collinearity)", n_zero))
+
+  # 3. ATT divergence from CS
+  tVec <- as.numeric(gsub(".*::", "", names(beta)))
+  post_att <- mean(beta[tVec >= 0])
+  divergence <- abs(post_att - cs_overall_att) / abs(cs_overall_att)
+  if (divergence > 0.3) {
+    issues <- c(issues, sprintf("ATT diverges from CS by %.0f%%", divergence * 100))
+  }
+
+  # Verdict
+  cat("SA Reliability Diagnostic:\n")
+  if (length(issues) == 0) {
+    cat("  VERDICT: RELIABLE — VCOV is clean, SEs are valid, ATT agrees with CS.\n")
+  } else if (length(issues) == 1 && divergence <= 0.3) {
+    cat(sprintf("  VERDICT: INVESTIGATE — %s\n", issues[1]))
+  } else {
+    cat("  VERDICT: UNRELIABLE — Multiple red flags:\n")
+    for (iss in issues) cat(sprintf("    - %s\n", iss))
+    cat("  Prefer CS or Gardner for this dataset.\n")
+  }
+  invisible(list(issues = issues, sa_att = post_att, divergence = divergence))
+}
+```
+
+> **Key insight**: SA disagreement with clean diagnostics (low forbidden weight, no VCOV issues in CS) usually signals SA estimation instability, not genuine heterogeneity. When SA is UNRELIABLE, report CS and Gardner estimates and note that SA was unstable.
+
+### Estimator Failure / Fallback Decision Tree
+
+When an estimator fails or produces unreliable results, use this decision tree:
+
+```
+Estimator failed or unreliable?
+│
+├─ CS failed
+│   ├─ "No valid groups" → Check gname coding (must be 0 for never-treated)
+│   ├─ "Singular matrix" → Too few control units; use control_group = "notyettreated"
+│   └─ Fallback: SA or Gardner
+│
+├─ SA failed / non-PSD VCOV
+│   ├─ Small/singleton cohorts? → Merge cohorts or drop singletons
+│   ├─ Too many collinear terms? → Restrict event window
+│   └─ Fallback: CS (most robust to small cohorts)
+│
+├─ BJS failed
+│   ├─ Unbalanced panel? → Balance first (prepare_bjs_data) or skip BJS
+│   ├─ "data must be data.table" → Convert with as.data.table()
+│   └─ Fallback: CS or SA
+│
+├─ Gardner failed
+│   ├─ Missing treat column? → Create: treat = (time >= gname & gname > 0)
+│   ├─ Convergence issues? → Simplify first_stage formula
+│   └─ Fallback: CS or SA
+│
+└─ Multiple estimators disagree substantially
+    ├─ Check if the disagreement is driven by one outlier estimator
+    ├─ Report the range and discuss possible causes
+    └─ Prefer CS for transparency, SA for speed, BJS for efficiency
+```
+
+> **Key insight**: Estimator failure is often informative about data structure (small cohorts, panel gaps, collinearity). Diagnose the failure before switching estimators.
+
+---
+
 ## Common Pitfalls
 
 1. **Forgetting to recode never-treated**: Each estimator has a different convention (0, NA, Inf, max+10)
@@ -440,6 +755,76 @@ run_did_comparison <- function(df, yname, tname, idname, gname) {
 4. **Wrong clustering**: Always cluster at the treatment assignment level
 5. **Confusing `gname` with `treat`**: `gname` is the timing variable (when treatment starts); `treat` is a 0/1 indicator for whether the unit-time is treated
 6. **Large never-treated gname for BJS**: Must be `max(time) + 10` (not 0, Inf, or NA)
+7. **Small/singleton cohorts with SA**: Cohorts with < 5 units cause non-PSD VCOV, zero SEs, and collinearity drops. Check cohort sizes before running SA.
+8. **Non-PSD VCOV from fixest**: Downstream HonestDiD/pretrends require valid covariance. If fixest "fixes" the VCOV, results are unreliable. Merge cohorts or switch to CS.
+9. **Unrestricted event windows with early adopters**: Default event studies include all leads/lags, producing 30+ period plots dominated by noise. Restrict windows to where data is dense.
+10. **Clustering at the wrong level**: If treatment is assigned at the state level but units are counties, you must cluster at the state level. See the "Clustering Standard Errors" section below.
+
+---
+
+## Clustering Standard Errors
+
+### Principle
+
+Cluster standard errors at the **level of treatment assignment**, not the level of observation. If a policy is implemented at the state level but your data are at the county level, cluster at the state level. This accounts for the within-cluster correlation induced by a common treatment shock.
+
+### Per-Estimator Clustering Syntax
+
+| Estimator | Parameter | Syntax Example |
+|-----------|-----------|----------------|
+| CS (`did`) | `clustervars` | `att_gt(..., clustervars = "state_id")` |
+| SA (`fixest`) | `cluster` | `feols(..., cluster = ~state_id)` |
+| BJS (`didimputation`) | `cluster_var` | `did_imputation(..., cluster_var = "state_id")` |
+| Gardner (`did2s`) | `cluster_var` | `did2s(..., cluster_var = "state_id")` |
+| Staggered | — | No explicit clustering parameter; uses analytical SEs |
+
+> **CS note**: The `clustervars` parameter accepts a character vector of variable names (e.g., `clustervars = "state_id"`), not a formula. This differs from fixest's `cluster = ~state_id` formula syntax.
+
+### Few-Cluster Problem
+
+When the number of treated clusters is small, cluster-robust standard errors can be severely biased (typically too small):
+
+| Treated Clusters | Reliability | Action |
+|-----------------|-------------|--------|
+| >= 50 | Reliable | Standard cluster-robust SEs are trustworthy |
+| 30 - 50 | Moderate | Generally OK; consider wild cluster bootstrap for verification |
+| 10 - 30 | Caution | Cluster-robust SEs may be anti-conservative; use wild cluster bootstrap |
+| < 10 | Unreliable | Aggregate to the treatment level before estimation, or use randomization inference |
+
+### Wild Cluster Bootstrap
+
+When cluster count is between 10 and 50, supplement cluster-robust SEs with wild cluster bootstrap:
+
+```r
+library(fwildclusterboot)
+
+# After running SA estimation with state-level clustering:
+sa_model <- feols(outcome ~ sunab(first_treat, year) | county_id + year,
+                  data = df, cluster = ~state_id)
+
+# Wild cluster bootstrap test for a specific coefficient
+boot_result <- boottest(sa_model,
+                        param = "first_treat::0",  # post-treatment coefficient
+                        clustid = "state_id",
+                        B = 9999,
+                        type = "webb")  # Webb weights recommended for few clusters
+summary(boot_result)
+```
+
+### Two-Way Clustering
+
+When treatment is assigned at the state level but outcomes may also be correlated over time within states:
+
+```r
+# fixest supports multi-way clustering natively
+sa_2way <- feols(outcome ~ sunab(first_treat, year) | county_id + year,
+                 data = df, cluster = ~state_id + year)
+
+# CS: pass multiple variables to clustervars
+cs_2way <- att_gt(yname = "outcome", tname = "year", idname = "county_id",
+                  gname = "first_treat", data = df,
+                  clustervars = c("state_id", "year"))
+```
 
 ---
 
@@ -618,6 +1003,45 @@ cat(sprintf("Relative change: %.1f%%\n", pct_change))
 - If results are similar (relative change < 10%), prefer the simpler unconditional model
 - If results differ substantially, discuss which PT assumption is more credible given the selection mechanism
 - For the 2x2 case (single treatment date), also consider `DRDID::drdid()` for the doubly-robust panel estimator (see `references/did-step-5-sensitivity-inference.md`, Section "DRDID: Doubly-Robust DiD with Covariates")
+
+### Covariate Syntax Across Estimators
+
+When Step D indicates covariates are warranted, each estimator has a different syntax for including them:
+
+**CS (`did`)**:
+```r
+cs_cond <- att_gt(yname = "outcome", tname = "year", idname = "unit_id",
+                  gname = "first_treat", data = df,
+                  xformla = ~ x1 + x2,  # covariates as formula
+                  est_method = "dr")     # doubly robust
+```
+
+**SA (`fixest`)**:
+```r
+# Covariates go in the main formula, before the sunab() term
+sa_cond <- feols(outcome ~ x1 + x2 + sunab(first_treat, year) | unit_id + year,
+                 data = df, cluster = ~state_id)
+```
+
+**BJS (`didimputation`)**:
+```r
+bjs_cond <- did_imputation(data = dt, yname = "outcome", gname = "first_treat",
+                           tname = "year", idname = "unit_id",
+                           first_stage = ~ x1 + x2 | unit_id + year)
+```
+
+**Gardner (`did2s`)**:
+```r
+# Covariates go in first_stage formula, before fixed effects
+gardner_cond <- did2s(data = df, yname = "outcome",
+                      first_stage = ~ x1 + x2 | unit_id + year,
+                      second_stage = ~ i(treat, ref = FALSE),
+                      treatment = "treat", cluster_var = "state_id")
+```
+
+**Staggered**: Does not support external covariates. Use CS or Gardner if covariates are needed.
+
+> **Covariate types**: Only include covariates that are **time-invariant** or **pre-treatment** values. Including post-treatment covariates introduces bad control bias. If you must use time-varying covariates, use only their baseline (pre-treatment) values.
 
 ### Step E: Formal Conditional Pre-Test
 

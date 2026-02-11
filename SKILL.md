@@ -65,7 +65,9 @@ Is treatment staggered (units adopt at different times)?
 └─ YES → TWFE may be biased. Continue below.
     │
     Is treatment binary and absorbing (once treated, always treated)?
-    ├─ YES → Use core estimators: CS, SA, BJS, Gardner, or Staggered
+    ├─ YES → Check cohort sizes (Step 1: cohort_summary).
+    │   ├─ All cohorts >= 5 units → All core estimators applicable.
+    │   └─ Any cohort < 5 units  → SA likely unstable; prefer CS or Gardner.
     │         See references/did-step-3-estimation.md
     └─ NO  → Treatment is non-binary, continuous, or reversible
               Use DIDmultiplegt / DIDmultiplegtDYN
@@ -83,6 +85,8 @@ Before running any DiD estimator, verify:
 4. **No anticipation**: Units do not change behavior before treatment onset
 5. **Sufficient variation**: Multiple treatment cohorts and/or never-treated units
 6. **Panel balance**: Some estimators require balanced panels (BJS especially)
+7. **Numeric identifiers**: Unit and group IDs must be numeric for most estimators and diagnostics.
+   Convert character IDs: `df$unit_num <- as.integer(as.factor(df$unit_id))`
 
 ---
 
@@ -92,8 +96,7 @@ Before running any DiD estimator, verify:
 
 Determine whether treatment is:
 - **Binary absorbing** (once treated, always treated) -- use core estimators
-- **Non-binary / reversible / continuous** -- use DIDmultiplegt family
-- **Staggered** (different units treated at different times) vs. **canonical** (single treatment date)
+- **Non-binary / reversible / continuous** -- use DIDmultiplegt family; **Staggered** vs. **canonical**
 
 See `references/did-step-1-treatment-structure.md` for routing details before diagnostics.
 
@@ -114,19 +117,24 @@ forbidden <- bacon_out[bacon_out$type == "Later vs Earlier Treated", ]
 cat("Forbidden comparison weight:", sum(forbidden$weight))
 ```
 
-**TwoWayFEWeights** (negative weight percentage):
+**TwoWayFEWeights** (negative weight share):
 ```r
 library(TwoWayFEWeights)
-weights_out <- twowayfeweights(df, Y = "outcome", G = "unit_id",
-                                T = "time", D = "treatment", type = "feTR")
+wt <- twowayfeweights(df, Y = "outcome", G = "unit_id",
+                       T = "time", D = "treatment", type = "feTR")
+# Extract negative weight share (absolute weight sums, not counts)
+neg_share <- abs(wt$sum_minus) / (wt$sum_plus + abs(wt$sum_minus)) * 100
+cat(sprintf("Negative weight share: %.1f%%\n", neg_share))
 ```
+
+> See `references/did-step-2-diagnostics.md` for full field reference and interpretation.
 
 **Severity Thresholds** (both diagnostics use the same bands):
 
-| Metric              | >50%   | 25-50%   | 10-25% | <10%    |
-|---------------------|--------|----------|--------|---------|
-| Forbidden weight %  | SEVERE | MODERATE | MILD   | MINIMAL |
-| Negative weight %   | SEVERE | MODERATE | MILD   | MINIMAL |
+| Metric                      | >50%   | 25-50%   | 10-25% | <10%    |
+|-----------------------------|--------|----------|--------|---------|
+| Forbidden weight %          | SEVERE | MODERATE | MILD   | MINIMAL |
+| Neg. weight share (abs. wt) | SEVERE | MODERATE | MILD   | MINIMAL |
 
 - SEVERE: Abandon TWFE entirely; use robust estimators
 - MODERATE: TWFE likely problematic; strongly prefer robust estimators
@@ -236,18 +244,19 @@ honest_results <- createSensitivityResults_relativeMagnitudes(
 | 1 - 1.5     | Moderate          | Robust if post-violations similar to pre-violations |
 | > 1.5       | Fairly robust     | Post-violations must be substantially larger to invalidate |
 
-**Power Analysis Interpretation** (detectable slope magnitude at 50% power):
+**Power Analysis Interpretation** (cumulative detectable bias / |ATT|):
 
-| Detectable Slope | Power Quality | Meaning |
-|------------------|---------------|---------|
-| < 0.001          | Excellent     | Can detect even tiny violations |
-| 0.001 - 0.01     | Good          | Good power to detect small violations |
-| 0.01 - 0.05      | Moderate      | Economically meaningful violations might go undetected |
-| > 0.05           | Poor          | Large violations could go undetected; pre-test is inconclusive |
+| Bias / |ATT| | Power Quality | Meaning |
+|---------------|---------------|---------|
+| < 5%          | Excellent     | Can detect violations far smaller than the effect |
+| 5% - 25%      | Good          | Good power relative to effect size |
+| 25% - 100%    | Moderate      | Undetectable violations could rival the effect |
+| > 100%        | Poor          | Pre-test is uninformative; see Step 4 for assessment |
 
 **Inference Best Practices:**
-- Cluster standard errors at the level of treatment assignment
-- With few treated clusters, use HonestDiD to handle non-zero average shocks
+- Cluster SEs at the treatment-assignment level (e.g., state if policy is state-level, even if units are counties). See Step 3 "Clustering Standard Errors" section for per-estimator syntax.
+- When treated clusters < 30, cluster-robust SEs may be unreliable; supplement with wild cluster bootstrap or HonestDiD
+- When treated clusters < 10, consider aggregating to the treatment level before estimation
 - Report both point estimates and HonestDiD sensitivity intervals
 
 ## Personalized Method Selection Advice
@@ -259,13 +268,11 @@ honest_results <- createSensitivityResults_relativeMagnitudes(
 
 ### By Sample Size
 - **Small (<100 units)**: Power analysis especially important; consider aggregating time periods; sensitivity analysis critical
-- **Medium**: Standard workflow applies
-- **Large (>10,000 units)**: Use Sun-Abraham (fixest) for speed; fine-grained event studies feasible; can afford flexible specifications
+- **Medium / Large**: Standard workflow; for >10K units prefer SA (fixest) for speed
 
 ### By Priority
-- **Speed**: Sun-Abraham (fixest::sunab) primary, Gardner (did2s) secondary
-- **Transparency**: Callaway-Sant'Anna (did) primary; emphasize clear assumptions; detailed reporting
-- **Robustness**: Compare multiple estimators; extensive sensitivity analysis; consider alternative identification
+- **Speed**: SA (fixest::sunab) primary, Gardner (did2s) secondary
+- **Transparency / Robustness**: CS (did) primary; compare multiple estimators; extensive sensitivity analysis
 
 ### Key Warnings at Each Step
 1. **Assessment**: Don't assume TWFE is valid without checking treatment pattern
@@ -333,6 +340,18 @@ Each estimator has specific requirements for the `gname` (first treatment period
 | Gardner (`did2s`) | Derive `treat` indicator | `treat = 1` when `time >= gname & gname > 0` |
 | Staggered   | `gname = Inf`       | Must not be 0 or NA for never-treated |
 | DCDH (`DIDmultiplegt`) | `gname = 0` | Binary 0/1 treatment indicator needed |
+
+**Sampling/Population Weights Per Estimator:**
+
+| Estimator | Parameter | Syntax |
+|-----------|-----------|--------|
+| CS (`did`) | `weightsname` | `att_gt(..., weightsname = "W")` |
+| SA (`fixest`) | `weights` | `feols(..., weights = ~W)` |
+| BJS (`didimputation`) | `wname` | `did_imputation(..., wname = "W")` |
+| Gardner (`did2s`) | `weights` | `did2s(..., weights = "W")` |
+| Staggered | — | Not supported; use CS or Gardner |
+
+> **When to weight**: Omit for unit-level effects; include population weights for population-representative effects (e.g., mortality across states of varying size).
 
 **BJS Balanced Panel Preparation** (critical -- didimputation will fail without this):
 ```r

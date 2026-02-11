@@ -3,8 +3,14 @@
 ## Contents
 - [Coefficient Extraction Cookbook](#coefficient-extraction-cookbook)
 - [HonestDiD: Sensitivity Analysis](#honestdid-sensitivity-analysis)
+  - [When the Baseline Effect Is Non-Significant](#when-the-baseline-effect-is-non-significant)
+  - [Pre-Period Selection for HonestDiD](#pre-period-selection-for-honestdid)
+  - [Uninformative HonestDiD Results](#uninformative-honestdid-results)
 - [DRDID: Doubly-Robust DiD with Covariates](#drdid-doubly-robust-did-with-covariates)
 - [Full Sensitivity Workflow Template](#full-sensitivity-workflow-template)
+  - [SA (fixest) Path](#sa-fixest-path)
+  - [CS (did) Path](#cs-did-path)
+- [Final Evidence Assessment](#final-evidence-assessment)
 
 ## Coefficient Extraction Cookbook
 
@@ -182,10 +188,10 @@ original_ci <- constructOriginalCS(
   numPrePeriods = length(ps$pre),
   numPostPeriods = length(ps$post))
 
-# Step 5: Sensitivity plot
+# Step 5: Sensitivity plot (robust first, original second)
 createSensitivityPlot_relativeMagnitudes(
-  original_ci, honest_rm,
-  Mbarvec = seq(0.5, 2, by = 0.5))
+  robustResults = honest_rm,
+  originalResults = original_ci)
 ```
 
 ### Finding the Breakdown M
@@ -221,6 +227,106 @@ breakdown <- find_breakdown_M(honest_rm)
 - NULL or > 2: Results appear robust to parallel trends violations
 - 1 to 2: Moderate robustness; report sensitivity analysis prominently
 - < 1: Results are fragile; interpret with substantial caution
+
+### When the Baseline Effect Is Non-Significant
+
+If the original CI already covers zero (e.g., [-0.085, 0.138]), the effect is not significant even under exact parallel trends. In this case:
+
+- **Breakdown M is trivially small**: The smallest tested M value will be the breakdown, since even zero violation already includes zero.
+- **HonestDiD cannot rescue an already-insignificant finding**: Sensitivity analysis widens the CI; if it already covers zero, all robust CIs will too.
+- **What to report**: State the original CI and note that sensitivity analysis confirms the null result is robust. Focus on effect size interpretation and statistical power (Step 4) — is the non-significance due to a true null or insufficient power?
+- **Power matters most here**: If detectable slope at 50% power is large relative to the treatment effect, the pre-test is uninformative and the null finding may reflect low power rather than no effect.
+
+**Auto-Detection for Insignificant Baseline:**
+
+```r
+detect_insignificant_baseline <- function(betahat_sub, sigma_sub, numPrePeriods, numPostPeriods) {
+  # Construct original CI
+  original <- constructOriginalCS(
+    betahat = betahat_sub, sigma = sigma_sub,
+    numPrePeriods = numPrePeriods, numPostPeriods = numPostPeriods)
+
+  covers_zero <- original$lb <= 0 & original$ub >= 0
+
+  if (covers_zero) {
+    cat("BASELINE EFFECT IS NON-SIGNIFICANT.\n")
+    cat(sprintf("  Original CI: [%.4f, %.4f] — covers zero.\n", original$lb, original$ub))
+    cat("  Breakdown M is trivially achieved (smallest M = breakdown).\n")
+    cat("  HonestDiD cannot rescue an already-insignificant finding.\n")
+    cat("  Focus on: (1) effect size interpretation, (2) power analysis (Step 4),\n")
+    cat("  (3) whether non-significance reflects a true null or insufficient power.\n")
+  }
+  invisible(list(covers_zero = covers_zero, original_ci = original))
+}
+```
+
+### Pre-Period Selection for HonestDiD
+
+HonestDiD's relative magnitudes approach uses the **maximum pre-treatment violation** as the baseline for bounding post-treatment violations. When compositionally thin event times (see "Compositional Effects in CS Dynamic Aggregation" in `did-step-3-estimation.md`) produce large noisy pre-treatment coefficients, this inflates the baseline and makes the sensitivity analysis overly conservative.
+
+**Symptom**: Breakdown M is low with all pre-periods but substantially higher when restricted to near pre-periods. Example: M = 1.0 (all) vs M = 1.5 (near only) — a 50% shift in robustness assessment.
+
+**Run sensitivity with both full and restricted pre-periods:**
+
+```r
+library(HonestDiD)
+
+# --- Full pre-period sensitivity ---
+ps_full <- validate_periods(tVec)
+keep_full <- c(ps_full$pre, ps_full$post)
+
+honest_full <- createSensitivityResults_relativeMagnitudes(
+  betahat = betahat[keep_full], sigma = sigma[keep_full, keep_full],
+  numPrePeriods = length(ps_full$pre),
+  numPostPeriods = length(ps_full$post),
+  Mbarvec = seq(0.5, 2, by = 0.5))
+breakdown_full <- find_breakdown_M(honest_full)
+
+# --- Near pre-period sensitivity ---
+near_pre <- which(tVec >= -5 & tVec < -1)   # adjust -5 based on data
+post_idx <- which(tVec >= 0)
+keep_near <- c(near_pre, post_idx)
+
+honest_near <- createSensitivityResults_relativeMagnitudes(
+  betahat = betahat[keep_near], sigma = sigma[keep_near, keep_near],
+  numPrePeriods = length(near_pre),
+  numPostPeriods = length(post_idx),
+  Mbarvec = seq(0.5, 2, by = 0.5))
+breakdown_near <- find_breakdown_M(honest_near)
+
+# --- Compare ---
+cat(sprintf("Breakdown M (all pre-periods):  %s\n",
+            if (is.null(breakdown_full)) "None" else sprintf("%.2f", breakdown_full)))
+cat(sprintf("Breakdown M (near pre-periods): %s\n",
+            if (is.null(breakdown_near)) "None" else sprintf("%.2f", breakdown_near)))
+```
+
+**Reporting guidance:**
+- **Always report both** breakdown M values when they differ
+- Explain the source: "Long-lead pre-treatment coefficients are driven by compositional changes (only late-adopting cohorts contribute at extreme event times)"
+- The **near-period analysis is usually more informative** because it uses pre-periods where the composition of contributing cohorts is stable and representative
+- If both breakdown M values are low (< 1), the result is fragile regardless of window choice
+- For "open endpoint" warnings in HonestDiD output, see `did-troubleshooting.md` Section 5
+
+### Uninformative HonestDiD Results
+
+Sometimes HonestDiD produces results that are effectively uninformative — typically when confidence intervals "explode" (become extremely wide) even at low M values.
+
+**Symptoms:**
+- Robust CIs span from large negative to large positive values (e.g., [-50, 80]) at M = 0.5
+- Breakdown M is very low (< 0.5) despite seemingly clean pre-trends
+- CI width increases dramatically between M = 0.5 and M = 1.0
+
+**Causes:**
+1. **Noisy pre-periods**: Large pre-treatment coefficient magnitudes set a high baseline violation, and even small M multiples produce wide CIs
+2. **Underpowered analysis**: When the outcome is noisy relative to the effect size, both the original and robust CIs are wide
+3. **Compositionally thin pre-periods**: Long-lead estimates dominated by 1-2 cohorts inflate the baseline (see "Compositional Effects" in Step 3)
+
+**What to do:**
+1. **Restrict pre-periods**: Use only near pre-periods (e.g., t = -5 to -2) where composition is stable. Compare breakdown M with full vs. restricted pre-periods.
+2. **Check baseline significance**: Use `detect_insignificant_baseline()` above. If the original CI already covers zero, HonestDiD cannot help.
+3. **Check power context**: Use `assess_power_context()` (Step 4). If bias/|ATT| > 100%, the analysis is fundamentally underpowered.
+4. **Report honestly**: State that sensitivity analysis is uninformative and explain why. Use `final_evidence_assessment()` below for a structured verdict.
 
 ---
 
@@ -329,6 +435,10 @@ cat(sprintf("Outcome Regression ATT:   %.1f\n", orr$ATT))
 
 ## Full Sensitivity Workflow Template
 
+Two complete templates are provided: one for the SA (fixest) path and one for the CS (did) path.
+
+### SA (fixest) Path
+
 Putting it all together -- from estimation through sensitivity analysis:
 
 ```r
@@ -373,4 +483,148 @@ if (is.null(breakdown)) {
 } else {
   cat(sprintf("Fairly robust: breakdown at M = %.2f.\n", breakdown))
 }
+```
+
+### CS (did) Path
+
+Complete workflow using Callaway-Sant'Anna, which handles small cohorts more gracefully and is often the best choice when SA is unstable.
+
+```r
+library(did)
+library(pretrends)
+library(HonestDiD)
+
+# === 1. Estimate robust event study ===
+cs_out <- att_gt(yname = "outcome", tname = "time", idname = "unit_id",
+                 gname = "first_treat", data = df,
+                 control_group = "notyettreated", est_method = "dr")
+cs_es <- aggte(cs_out, type = "dynamic", min_e = -10, max_e = 15)
+
+# === 2. Extract coefficients (filter invalid periods) ===
+valid <- !is.na(cs_es$se) & cs_es$se > 0
+betahat <- cs_es$att.egt[valid]
+names(betahat) <- cs_es$egt[valid]
+tVec <- as.numeric(cs_es$egt[valid])
+sigma <- diag(cs_es$se[valid]^2)  # diagonal approximation
+
+# === 3. Power analysis ===
+slope_50 <- slope_for_power(sigma = sigma, targetPower = 0.50,
+                            tVec = tVec, referencePeriod = -1)
+cat(sprintf("Detectable slope at 50%% power: %.4f\n", slope_50))
+
+# === 4. HonestDiD sensitivity ===
+ps <- validate_periods(tVec)
+keep <- c(ps$pre, ps$post)
+
+honest_rm <- createSensitivityResults_relativeMagnitudes(
+  betahat = betahat[keep], sigma = sigma[keep, keep],
+  numPrePeriods = length(ps$pre),
+  numPostPeriods = length(ps$post),
+  Mbarvec = seq(0.5, 2, by = 0.5))
+
+original_ci <- constructOriginalCS(
+  betahat = betahat[keep], sigma = sigma[keep, keep],
+  numPrePeriods = length(ps$pre),
+  numPostPeriods = length(ps$post))
+
+# === 5. Sensitivity plot ===
+createSensitivityPlot_relativeMagnitudes(
+  robustResults = honest_rm,
+  originalResults = original_ci)
+
+# === 6. Report ===
+breakdown <- find_breakdown_M(honest_rm)
+overall_att <- aggte(cs_out, type = "simple")
+cat(sprintf("Overall ATT: %.4f (SE: %.4f)\n",
+            overall_att$overall.att, overall_att$overall.se))
+cat(sprintf("Breakdown M: %s\n",
+            if (is.null(breakdown)) "None (robust to all tested M)"
+            else sprintf("%.2f", breakdown)))
+```
+
+---
+
+## Final Evidence Assessment
+
+After completing Steps 3-5, synthesize the evidence into a structured verdict. This function integrates ATT significance, power context, pre-test results, breakdown M, and estimator agreement:
+
+```r
+final_evidence_assessment <- function(att, att_se, bias_ratio, pretest_pval,
+                                       breakdown_m, estimators_agree) {
+  cat("========================================\n")
+  cat("  FINAL EVIDENCE ASSESSMENT\n")
+  cat("========================================\n\n")
+
+  att_sig <- abs(att / att_se) > 1.96
+  powered <- bias_ratio < 1.0
+  pretest_pass <- is.na(pretest_pval) || pretest_pval > 0.05
+  robust <- is.null(breakdown_m) || breakdown_m >= 1.0
+
+  cat(sprintf("ATT: %.4f (SE: %.4f) — %s\n", att, att_se,
+              ifelse(att_sig, "SIGNIFICANT", "NOT SIGNIFICANT")))
+  cat(sprintf("Bias/|ATT|: %.1f%% — %s\n", 100 * bias_ratio,
+              ifelse(powered, "POWERED", "UNDERPOWERED")))
+  cat(sprintf("Pre-test p-value: %s — %s\n",
+              ifelse(is.na(pretest_pval), "N/A", sprintf("%.4f", pretest_pval)),
+              ifelse(pretest_pass, "PASS", "FAIL")))
+  cat(sprintf("Breakdown M: %s — %s\n",
+              ifelse(is.null(breakdown_m), "None", sprintf("%.2f", breakdown_m)),
+              ifelse(robust, "ROBUST", "FRAGILE")))
+  cat(sprintf("Estimator agreement: %s\n\n", ifelse(estimators_agree, "YES", "NO")))
+
+  # Determine verdict
+  if (att_sig && pretest_pass && robust && estimators_agree) {
+    verdict <- "STRONG EVIDENCE"
+    detail <- "Significant effect, pre-test passes, robust to sensitivity analysis, estimators agree."
+  } else if (att_sig && pretest_pass && robust && !estimators_agree) {
+    verdict <- "MIXED"
+    detail <- "Significant and robust, but estimators disagree. Investigate sources of disagreement."
+  } else if (att_sig && (!pretest_pass || !robust)) {
+    verdict <- "FRAGILE"
+    detail <- "Significant effect, but fragile to parallel trends violations or pre-test fails."
+  } else if (att_sig && pretest_pass && !powered) {
+    verdict <- "SUGGESTIVE"
+    detail <- "Significant effect, but pre-test is uninformative (low power). Cannot rule out large violations."
+  } else if (!att_sig && powered && pretest_pass) {
+    verdict <- "EVIDENCE OF NULL"
+    detail <- "No significant effect despite adequate power. Consistent with no treatment effect."
+  } else if (!att_sig && !powered) {
+    verdict <- "UNINFORMATIVE"
+    detail <- "No significant effect, but analysis lacks power. Cannot distinguish null from small effect."
+  } else {
+    verdict <- "INCONCLUSIVE"
+    detail <- "Mixed signals across diagnostics. Report all results and let readers assess."
+  }
+
+  cat(sprintf("VERDICT: %s\n", verdict))
+  cat(sprintf("  %s\n", detail))
+
+  invisible(list(verdict = verdict, detail = detail,
+                 att_sig = att_sig, powered = powered,
+                 pretest_pass = pretest_pass, robust = robust))
+}
+```
+
+**Verdict Interpretation:**
+
+| Verdict | Meaning | Recommended Action |
+|---------|---------|-------------------|
+| STRONG EVIDENCE | All diagnostics support the finding | Report confidently with sensitivity analysis |
+| SUGGESTIVE | Effect found but power is low | Report with prominent caveats about power |
+| EVIDENCE OF NULL | Adequate power, no effect | Report as a well-powered null result |
+| UNINFORMATIVE | Low power, no effect | State that the data cannot distinguish null from small effects |
+| FRAGILE | Effect found but sensitive to violations | Report with strong caveats; discuss identification |
+| MIXED | Estimators disagree or other mixed signals | Report all results; discuss sources of disagreement |
+
+**Usage example:**
+```r
+# After completing Steps 3-5:
+final_evidence_assessment(
+  att = overall_att$overall.att,
+  att_se = overall_att$overall.se,
+  bias_ratio = power_context$bias_ratio,
+  pretest_pval = ftest_result$p_value,
+  breakdown_m = breakdown,
+  estimators_agree = (comparison_cv < 0.2)
+)
 ```

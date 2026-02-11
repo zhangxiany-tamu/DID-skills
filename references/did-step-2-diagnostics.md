@@ -5,7 +5,9 @@
 - [TwoWayFEWeights: de Chaisemartin-D'Haultfoeuille Weights](#twowayfeweights-de-chaisemartin-dhaultfoeuille-weights)
 - [Severity Threshold Tables](#severity-threshold-tables)
 - [Treatment Monotonicity Validation](#treatment-monotonicity-validation)
+- [Fallback When Panel Cannot Be Balanced](#fallback-when-panel-cannot-be-balanced)
 - [When Diagnostics Are Not Needed](#when-diagnostics-are-not-needed)
+- [Scalability: Large Panels (>1,000 Units)](#scalability-large-panels-1000-units)
 
 Two complementary diagnostic tools for detecting problems with TWFE regression under staggered treatment adoption.
 
@@ -89,7 +91,7 @@ cat(sprintf("Forbidden comparison weight: %.1f%%\n", forbidden_pct))
 
 - Requires a **binary treatment indicator** (0/1), not the treatment timing variable
 - The treatment variable should equal 1 for all post-treatment observations of treated units
-- Works with unbalanced panels but balanced panels are preferred
+- **Balanced panel strongly preferred**: `bacon()` may error or produce unreliable results with unbalanced panels. Balance the panel first (restrict year range, drop units with heavy missingness) or use TwoWayFEWeights as a fallback diagnostic.
 - The `id_var` and `time_var` must uniquely identify observations
 
 ---
@@ -105,6 +107,14 @@ Directly estimates the weights that TWFE assigns to each group-time average trea
 ```r
 install.packages("TwoWayFEWeights")
 ```
+
+### Data Preparation Notes
+
+- **G must be numeric/integer**: Character group IDs (e.g., state abbreviations) cause cryptic errors. Convert first:
+  ```r
+  df$unit_num <- as.integer(as.factor(df$unit_id))
+  ```
+- All other variables (`Y`, `T`, `D`) should also be numeric.
 
 ### Key Function
 
@@ -156,22 +166,23 @@ for (reg_type in types) {
 
 ### Interpretation Guide
 
-Key output measures:
+Key output fields from the `twowayfeweights` result object:
 
-| Measure | Description |
-|---------|-------------|
-| N_pos | Number of group-time cells with positive weights |
-| N_neg | Number of group-time cells with negative weights |
-| Sum of positive weights | Total positive weight |
-| Sum of negative weights | Total negative weight (magnitude of problem) |
+| Field | Description |
+|-------|-------------|
+| `$nr_plus` | Number of group-time cells with positive weights |
+| `$nr_minus` | Number of group-time cells with negative weights |
+| `$sum_plus` | Sum of positive weights |
+| `$sum_minus` | Sum of negative weights (negative number) |
+| `$beta` | TWFE coefficient |
+| `$sensibility` | Min treatment effect heterogeneity for sign reversal |
 
-Calculate the negative weight percentage:
+Calculate the negative weight share (absolute weight sums, not counts):
 ```r
-n_neg <- weights_result$N_neg
-n_pos <- weights_result$N_pos
-total <- n_neg + n_pos
-neg_pct <- if (total > 0) 100 * n_neg / total else 0
-cat(sprintf("Negative weight percentage: %.1f%%\n", neg_pct))
+wt <- weights_result
+neg_share <- abs(wt$sum_minus) / (wt$sum_plus + abs(wt$sum_minus)) * 100
+cat(sprintf("Negative weight share: %.1f%%\n", neg_share))
+cat(sprintf("Negative cells: %d of %d\n", wt$nr_minus, wt$nr_plus + wt$nr_minus))
 ```
 
 ---
@@ -220,10 +231,8 @@ diagnose_twfe <- function(data, outcome, unit, time, treatment) {
   # 2. TwoWayFEWeights
   wt <- TwoWayFEWeights::twowayfeweights(
     data, Y = outcome, G = unit, T = time, D = treatment, type = "feTR")
-  n_neg <- if (is.null(wt$N_neg)) 0 else wt$N_neg
-  n_pos <- if (is.null(wt$N_pos)) 0 else wt$N_pos
-  total <- n_neg + n_pos
-  neg_pct <- if (total > 0) 100 * n_neg / total else 0
+  neg_pct <- if (wt$sum_plus + abs(wt$sum_minus) > 0)
+    100 * abs(wt$sum_minus) / (wt$sum_plus + abs(wt$sum_minus)) else 0
 
   wt_sev <- if (neg_pct > 50) "SEVERE"
             else if (neg_pct > 25) "MODERATE"
@@ -272,8 +281,99 @@ validate_treatment_monotonicity <- function(data, id_var, time_var, treat_var) {
 }
 ```
 
+## Fallback When Panel Cannot Be Balanced
+
+When significant missingness prevents easy panel balancing, Bacon decomposition may be infeasible. Use this fallback strategy:
+
+1. **Use TwoWayFEWeights alone**: It handles unbalanced panels. The negative weight share provides a sufficient diagnostic of TWFE bias severity.
+2. **Partial balancing**: Restrict to time periods with >= 90% unit coverage. This preserves most of the panel while enabling Bacon.
+   ```r
+   obs_per_period <- table(df[[tname]])
+   keep_periods <- as.numeric(names(obs_per_period[obs_per_period >= 0.9 * n_units]))
+   df_partial <- df[df[[tname]] %in% keep_periods, ]
+   ```
+3. **Skip diagnostics entirely**: If you plan to use robust estimators regardless (severity is assumed MODERATE+), proceed directly to Step 3. Document that diagnostics were skipped due to panel imbalance.
+
+> **Decision rule**: If TwoWayFEWeights shows > 25% negative weight share, the diagnostic conclusion is clear (use robust estimators) regardless of whether Bacon is also available.
+
+---
+
 ## When Diagnostics Are Not Needed
 
 - **Non-staggered (canonical) DiD**: Only one treatment date -- no forbidden comparisons possible
 - **Only two time periods**: Standard 2x2 DiD -- TWFE is equivalent to simple DiD
 - **Already using robust estimators**: Diagnostics motivate the switch; if you've already switched, they serve as documentation
+
+---
+
+## Scalability: Large Panels (>1,000 Units)
+
+When panels contain thousands of units (e.g., county-level data with 3,000+ counties), diagnostics can become extremely slow or infeasible. Use this section to choose the right approach.
+
+### Performance Expectations
+
+| Units | Cohorts | Bacon Runtime | TWFE Weights Runtime | Recommendation |
+|-------|---------|---------------|---------------------|----------------|
+| < 500 | < 10 | Seconds | Seconds | Run both |
+| 500 - 1,000 | < 15 | Minutes | Seconds | Run both |
+| 1,000 - 5,000 | < 20 | 10+ minutes or fails | Minutes | TwoWayFEWeights only, or aggregate first |
+| > 5,000 | Any | Likely infeasible | Minutes | TwoWayFEWeights only, or aggregate first |
+
+> **Bacon is O(N^2)** in the number of units because it computes all pairwise 2x2 comparisons. TwoWayFEWeights is based on a single TWFE regression and scales much better.
+
+### Strategy 1: Aggregate to Treatment Level
+
+If treatment is assigned at a higher level (e.g., state-level policy, county-level data), aggregate the outcome to the treatment level before running diagnostics:
+
+```r
+library(dplyr)
+
+# Aggregate county-level data to state-level (population-weighted)
+df_state <- df %>%
+  group_by(state_id, year) %>%
+  summarise(
+    outcome = weighted.mean(outcome, w = population, na.rm = TRUE),
+    treatment = first(treatment),     # same within state-year
+    first_treat = first(first_treat), # same within state
+    .groups = "drop"
+  )
+
+# Now run Bacon on the aggregated data (51 units, not 3,000)
+bacon_out <- bacon(outcome ~ treatment, data = df_state,
+                   id_var = "state_id", time_var = "year")
+```
+
+> **Caveat**: Aggregated Bacon decomposes a *different* TWFE regression than the unit-level one. The weights and forbidden comparison shares may differ because aggregation changes the effective sample. Report this when comparing diagnostics across levels.
+
+### Strategy 2: Subsample
+
+Draw a random sample of units, preserving the treatment structure:
+
+```r
+# Stratified subsample: keep all treated units, sample 500 controls
+set.seed(42)
+treated_ids <- unique(df$unit_id[df$first_treat > 0 & !is.na(df$first_treat)])
+control_ids <- unique(df$unit_id[is.na(df$first_treat) | df$first_treat == 0])
+sampled_controls <- sample(control_ids, min(500, length(control_ids)))
+
+df_sub <- df[df$unit_id %in% c(treated_ids, sampled_controls), ]
+bacon_out <- bacon(outcome ~ treatment, data = df_sub,
+                   id_var = "unit_id", time_var = "year")
+```
+
+### Strategy 3: Skip Bacon, Use TwoWayFEWeights Only
+
+TwoWayFEWeights scales to large panels because it only requires one TWFE regression. If Bacon is infeasible:
+
+```r
+# TwoWayFEWeights works on the full panel
+wt <- twowayfeweights(df, Y = "outcome", G = "unit_id",
+                       T = "year", D = "treatment", type = "feTR")
+neg_share <- abs(wt$sum_minus) / (wt$sum_plus + abs(wt$sum_minus)) * 100
+cat(sprintf("Negative weight share: %.1f%%\n", neg_share))
+
+# If neg_share > 25%, the conclusion is clear: use robust estimators
+# Bacon would add granularity but not change the recommendation
+```
+
+> **Decision rule**: If TwoWayFEWeights shows > 25% negative weight share, the diagnostic conclusion is definitive regardless of whether Bacon is also available. Proceed to Step 3.
