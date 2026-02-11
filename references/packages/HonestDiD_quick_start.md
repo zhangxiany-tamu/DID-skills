@@ -76,13 +76,17 @@ data(LWdata_EventStudy)
 betahat <- LWdata_EventStudy$betahat
 sigma   <- LWdata_EventStudy$sigma
 
+# Identify pre/post periods from the data object
+numPrePeriods  <- length(LWdata_EventStudy$prePeriodIndices)   # = 9
+numPostPeriods <- length(LWdata_EventStudy$postPeriodIndices)  # = 23
+
 # Sensitivity analysis: how do conclusions change as we allow
 # post-treatment violations up to Mbar × max pre-treatment violation?
 delta_rm_results <- createSensitivityResults_relativeMagnitudes(
   betahat = betahat,
   sigma = sigma,
-  numPrePeriods = length(betahat) - 1,
-  numPostPeriods = 1,
+  numPrePeriods = numPrePeriods,
+  numPostPeriods = numPostPeriods,
   Mbarvec = seq(0.5, 2, by = 0.5)
 )
 
@@ -90,8 +94,8 @@ delta_rm_results <- createSensitivityResults_relativeMagnitudes(
 original_cs <- constructOriginalCS(
   betahat = betahat,
   sigma = sigma,
-  numPrePeriods = length(betahat) - 1,
-  numPostPeriods = 1
+  numPrePeriods = numPrePeriods,
+  numPostPeriods = numPostPeriods
 )
 
 # KEY OUTPUT: Sensitivity plot showing CI widening as Mbar increases

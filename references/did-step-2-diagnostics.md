@@ -222,22 +222,28 @@ diagnose_twfe <- function(data, outcome, unit, time, treatment) {
   forbidden_idx <- bacon_out$type == "Later vs Earlier Treated"
   forbidden_pct <- 100 * sum(bacon_out$weight[forbidden_idx])
 
-  bacon_sev <- if (forbidden_pct > 50) "SEVERE"
-               else if (forbidden_pct > 25) "MODERATE"
-               else if (forbidden_pct > 10) "MILD"
-               else "MINIMAL"
+  bacon_sev <- {
+    if (forbidden_pct > 50) "SEVERE"
+    else if (forbidden_pct > 25) "MODERATE"
+    else if (forbidden_pct > 10) "MILD"
+    else "MINIMAL"
+  }
   cat(sprintf("Bacon: Forbidden weight = %.1f%% [%s]\n", forbidden_pct, bacon_sev))
 
   # 2. TwoWayFEWeights
   wt <- TwoWayFEWeights::twowayfeweights(
     data, Y = outcome, G = unit, T = time, D = treatment, type = "feTR")
-  neg_pct <- if (wt$sum_plus + abs(wt$sum_minus) > 0)
-    100 * abs(wt$sum_minus) / (wt$sum_plus + abs(wt$sum_minus)) else 0
+  neg_pct <- {
+    if (wt$sum_plus + abs(wt$sum_minus) > 0)
+      100 * abs(wt$sum_minus) / (wt$sum_plus + abs(wt$sum_minus)) else 0
+  }
 
-  wt_sev <- if (neg_pct > 50) "SEVERE"
-            else if (neg_pct > 25) "MODERATE"
-            else if (neg_pct > 10) "MILD"
-            else "MINIMAL"
+  wt_sev <- {
+    if (neg_pct > 50) "SEVERE"
+    else if (neg_pct > 25) "MODERATE"
+    else if (neg_pct > 10) "MILD"
+    else "MINIMAL"
+  }
   cat(sprintf("Weights: Negative %% = %.1f%% [%s]\n", neg_pct, wt_sev))
 
   # 3. Overall recommendation

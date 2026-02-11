@@ -114,7 +114,7 @@ bacon_out <- bacon(outcome ~ treatment, data = df,
                    id_var = "unit_id", time_var = "time")
 # Check: what share of weight is on "Later vs Earlier" comparisons?
 forbidden <- bacon_out[bacon_out$type == "Later vs Earlier Treated", ]
-cat("Forbidden comparison weight:", sum(forbidden$weight))
+cat(sprintf("Forbidden comparison weight: %.1f%%\n", 100 * sum(forbidden$weight)))
 ```
 
 **TwoWayFEWeights** (negative weight share):
@@ -175,7 +175,8 @@ ggdid(cs_es)
 Sun-Abraham:
 ```r
 library(fixest)
-# Requires a fixest version that exports sunab(); update fixest if missing.
+# sunab() drops rows where first_treat is NA; convert to Inf for never-treated
+df$first_treat[is.na(df$first_treat)] <- Inf
 sa_out <- feols(outcome ~ sunab(first_treat, time) | unit_id + time,
                 data = df, cluster = ~unit_id)
 iplot(sa_out)
@@ -184,7 +185,8 @@ iplot(sa_out)
 Gardner (did2s):
 ```r
 library(did2s)
-df$treat <- ifelse(df$time >= df$first_treat & df$first_treat > 0, 1, 0)
+df$treat <- ifelse(!is.na(df$first_treat) & df$first_treat > 0 &
+                   df$time >= df$first_treat, 1, 0)
 gardner_out <- did2s(data = df, yname = "outcome",
                      first_stage = ~ 0 | unit_id + time,
                      second_stage = ~ i(treat, ref = FALSE),
@@ -197,10 +199,13 @@ See `references/did-step-4-power-analysis.md` for full details.
 
 ```r
 library(pretrends)
-# Extract coefficients from robust estimator
-beta <- coef(sa_out)
-sigma <- vcov(sa_out)
-tVec <- as.numeric(gsub(".*::", "", names(beta)))
+# Extract matched coefficients and VCOV from sunab model
+# NOTE: coef() and vcov() have mismatched dimensions for sunab models;
+# sunab_beta_vcv() returns properly aggregated, conformable objects.
+bv <- HonestDiD:::sunab_beta_vcv(sa_out)
+beta  <- bv$beta
+sigma <- bv$sigma
+tVec  <- as.numeric(gsub(".*::", "", names(coef(sa_out))))
 
 # What linear trend slope would we detect with 50% power?
 slope_50 <- slope_for_power(sigma = sigma, targetPower = 0.50,
@@ -218,10 +223,10 @@ See `references/did-step-5-sensitivity-inference.md` for full details including 
 
 ```r
 library(HonestDiD)
-# Identify period structure
+# beta and sigma from the pretrends block above (via sunab_beta_vcv)
+# sunab omits the base period (-1), so tVec already excludes it.
 pre_idx  <- which(tVec < -1)
 post_idx <- which(tVec >= 0)
-base_idx <- which(tVec == -1)  # exactly one required
 
 # Subset betahat and sigma to pre + post (excluding base)
 keep <- c(pre_idx, post_idx)
@@ -306,9 +311,12 @@ extract_time_periods <- function(coef_names) {
 
 **From fixest (Sun-Abraham):**
 ```r
-betahat <- coef(sa_model)
-sigma   <- vcov(sa_model)
-tVec    <- extract_time_periods(names(betahat))
+# coef() and vcov() have mismatched dimensions for sunab models.
+# Use sunab_beta_vcv() to get properly aggregated, conformable objects.
+bv      <- HonestDiD:::sunab_beta_vcv(sa_model)
+betahat <- bv$beta
+sigma   <- bv$sigma
+tVec    <- extract_time_periods(names(coef(sa_model)))
 ```
 
 **From did (Callaway-Sant'Anna):**
@@ -322,10 +330,12 @@ tVec  <- as.numeric(es$egt)
 
 **From didimputation (BJS):**
 ```r
-# BJS returns a fixest object internally -- use same extraction as fixest
-betahat <- coef(bjs_model)
-sigma   <- vcov(bjs_model)
-tVec    <- extract_time_periods(names(betahat))
+# did_imputation() returns a data.table, not a fixest object.
+# Extract coefficients and SEs from the table columns directly.
+betahat <- bjs_model$estimate
+names(betahat) <- bjs_model$term
+sigma   <- diag(bjs_model$std.error^2)
+tVec    <- extract_time_periods(bjs_model$term)
 ```
 
 ## Data Preparation Gotchas Per Estimator
@@ -335,7 +345,7 @@ Each estimator has specific requirements for the `gname` (first treatment period
 | Estimator   | Never-Treated Coding | Special Requirements |
 |-------------|---------------------|----------------------|
 | CS (`did`)  | `gname = 0`         | Must not be NA for never-treated |
-| SA (`fixest`) | NA is OK           | Add `cohort` variable if needed |
+| SA (`fixest`) | `gname = Inf`      | NA drops rows; convert NA → Inf |
 | BJS (`didimputation`) | `gname = max(time)+10` | Balanced panel required; data.table format |
 | Gardner (`did2s`) | Derive `treat` indicator | `treat = 1` when `time >= gname & gname > 0` |
 | Staggered   | `gname = Inf`       | Must not be 0 or NA for never-treated |
@@ -468,12 +478,14 @@ create_did_example_data <- function(n_units = 100, n_periods = 10,
   set.seed(seed)
   data <- expand.grid(unit_id = 1:n_units, time = 1:n_periods)
 
-  # Staggered treatment: 30% never-treated, 30% early, 40% late
+  # Staggered treatment: 30% never-treated, 4 treated cohorts
   n_never <- floor(n_units * 0.3)
-  n_early <- floor(n_units * 0.3)
+  remaining <- n_units - n_never
+  cohort_times <- treatment_period + c(-2, 0, 2, 3)
+  cohort_sizes <- as.integer(c(0.2, 0.3, 0.3, 0.2) * remaining)
+  cohort_sizes[length(cohort_sizes)] <- remaining - sum(cohort_sizes[-length(cohort_sizes)])
   first_treat <- c(rep(NA, n_never),
-                   rep(treatment_period, n_early),
-                   rep(treatment_period + 2, n_units - n_never - n_early))
+                   unlist(mapply(rep, cohort_times, cohort_sizes)))
   data$first_treat <- first_treat[data$unit_id]
   data$treated <- ifelse(is.na(data$first_treat), 0,
                          ifelse(data$time >= data$first_treat, 1, 0))

@@ -44,12 +44,17 @@ extract_time_periods <- function(coef_names) {
 ### From fixest / Sun-Abraham
 
 ```r
+# NOTE: sunab() drops rows where gname is NA. Convert never-treated to Inf first.
+# df$cohort[is.na(df$cohort)] <- Inf
 sa_model <- feols(outcome ~ sunab(cohort, period) | id + period,
                   data = df, cluster = ~id)
 
-betahat <- coef(sa_model)
-sigma   <- vcov(sa_model)
-tVec    <- extract_time_periods(names(betahat))
+# WARNING: coef() and vcov() have mismatched dimensions for sunab models.
+# Use sunab_beta_vcv() which returns properly matched beta and sigma.
+bv      <- HonestDiD:::sunab_beta_vcv(sa_model)
+betahat <- bv$beta
+sigma   <- bv$sigma
+tVec    <- extract_time_periods(names(coef(sa_model)))
 ```
 
 ### From did / Callaway-Sant'Anna
@@ -70,16 +75,18 @@ Note: The `did` package returns standard errors, not a full covariance matrix. U
 
 ### From didimputation / BJS
 
-BJS internally produces a fixest-compatible object, so use the same extraction as fixest:
+`did_imputation()` returns a `data.table`, not a fixest object. Extract coefficients from the columns:
 
 ```r
 bjs_model <- did_imputation(data = dt, yname = "outcome",
                             gname = "first_treat", tname = "year",
                             idname = "unit_id", horizon = TRUE)
 
-betahat <- coef(bjs_model)
-sigma   <- vcov(bjs_model)
-tVec    <- extract_time_periods(names(betahat))
+# did_imputation() returns a data.table, not a fixest object.
+betahat <- bjs_model$estimate
+names(betahat) <- bjs_model$term
+sigma   <- diag(bjs_model$std.error^2)  # Diagonal approximation
+tVec    <- extract_time_periods(bjs_model$term)
 ```
 
 ### Period Structure Validation
@@ -88,14 +95,22 @@ Before passing coefficients to HonestDiD, validate the period structure:
 
 ```r
 validate_periods <- function(tVec) {
-  pre_indices  <- which(tVec < -1)
-  post_indices <- which(tVec >= 0)
-  base_index   <- which(tVec == -1)
+  base_index <- which(tVec == -1)
+
+  if (length(base_index) == 1) {
+    # Base period present (e.g., CS output) — will be excluded for HonestDiD
+    pre_indices  <- which(tVec < -1)
+    post_indices <- which(tVec >= 0)
+  } else if (length(base_index) == 0) {
+    # Base period already excluded (e.g., SA via sunab_beta_vcv)
+    pre_indices  <- which(tVec < 0)
+    post_indices <- which(tVec >= 0)
+  } else {
+    stop("Multiple periods with tVec == -1 found")
+  }
 
   if (length(pre_indices) == 0)
-    stop("At least one pre-treatment period (t < -1) required")
-  if (length(base_index) != 1)
-    stop("Exactly one base period (t = -1) required for HonestDiD")
+    stop("At least one pre-treatment period required")
   if (length(post_indices) == 0)
     stop("At least one post-treatment period (t >= 0) required")
 
@@ -159,11 +174,14 @@ library(HonestDiD)
 library(fixest)
 
 # Step 1: Estimate event study
+# NOTE: sunab() drops rows where gname is NA. Convert never-treated to Inf first.
+# df$cohort[is.na(df$cohort)] <- Inf
 sa_model <- feols(outcome ~ sunab(cohort, period) | id + period,
                   data = df, cluster = ~id)
-betahat <- coef(sa_model)
-sigma   <- vcov(sa_model)
-tVec    <- extract_time_periods(names(betahat))
+bv      <- HonestDiD:::sunab_beta_vcv(sa_model)
+betahat <- bv$beta
+sigma   <- bv$sigma
+tVec    <- extract_time_periods(names(coef(sa_model)))
 
 # Step 2: Validate and subset
 ps <- validate_periods(tVec)
@@ -447,11 +465,14 @@ library(pretrends)
 library(HonestDiD)
 
 # === 1. Estimate robust event study ===
+# NOTE: sunab() drops rows where gname is NA. Convert never-treated to Inf first.
+# df$cohort[is.na(df$cohort)] <- Inf
 sa_model <- feols(outcome ~ sunab(cohort, period) | id + period,
                   data = df, cluster = ~id)
-betahat <- coef(sa_model)
-sigma   <- vcov(sa_model)
-tVec    <- extract_time_periods(names(betahat))
+bv      <- HonestDiD:::sunab_beta_vcv(sa_model)
+betahat <- bv$beta
+sigma   <- bv$sigma
+tVec    <- extract_time_periods(names(coef(sa_model)))
 
 # === 2. Power analysis ===
 slope_50 <- slope_for_power(sigma = sigma, targetPower = 0.50,
@@ -567,8 +588,8 @@ final_evidence_assessment <- function(att, att_se, bias_ratio, pretest_pval,
   cat(sprintf("Pre-test p-value: %s — %s\n",
               ifelse(is.na(pretest_pval), "N/A", sprintf("%.4f", pretest_pval)),
               ifelse(pretest_pass, "PASS", "FAIL")))
-  cat(sprintf("Breakdown M: %s — %s\n",
-              ifelse(is.null(breakdown_m), "None", sprintf("%.2f", breakdown_m)),
+  breakdown_str <- if (is.null(breakdown_m)) "None" else sprintf("%.2f", breakdown_m)
+  cat(sprintf("Breakdown M: %s — %s\n", breakdown_str,
               ifelse(robust, "ROBUST", "FRAGILE")))
   cat(sprintf("Estimator agreement: %s\n\n", ifelse(estimators_agree, "YES", "NO")))
 

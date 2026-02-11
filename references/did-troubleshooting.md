@@ -180,13 +180,29 @@ install.packages("fixest")  # update to latest CRAN version
 packageVersion("fixest")  # should be >= 0.10.0
 ```
 
-### feols() convergence warnings
+### feols() drops observations ("NOTE: x observations removed because of NA values")
 
 ```
 NOTE: x observations removed because of NA values.
 ```
 
-or fixed-effects convergence issues with large datasets.
+**Most common cause with sunab()**: Never-treated units coded as `NA` in the cohort variable. `sunab()` drops all rows where the cohort variable is `NA`, silently losing all never-treated observations.
+
+**Fix**: Convert never-treated units to `Inf` before calling `feols()`:
+```r
+df$cohort[is.na(df$cohort)] <- Inf
+sa_out <- feols(y ~ sunab(cohort, period) | id + time, data = df, cluster = ~id)
+```
+
+**Other causes**: `NA` values in the outcome variable or other regressors. Check with:
+```r
+sum(is.na(df$outcome))  # NAs in outcome
+sum(is.na(df$cohort))   # NAs in cohort (should be 0 after Inf conversion)
+```
+
+### feols() convergence warnings
+
+Fixed-effects convergence issues with large datasets.
 
 **Diagnosis and fix**:
 ```r

@@ -58,13 +58,19 @@ Full power analysis for a hypothesized trend violation.
 ```r
 library(fixest)
 library(pretrends)
+library(HonestDiD)
 
 # Extract from robust estimator
+# NOTE: sunab() drops rows where gname is NA. Convert never-treated to Inf first.
+# df$cohort[is.na(df$cohort)] <- Inf
 sa_model <- feols(outcome ~ sunab(cohort, period) | id + period,
                   data = df, cluster = ~id)
-beta  <- coef(sa_model)
-sigma <- vcov(sa_model)
-tVec  <- extract_time_periods(names(beta))
+# WARNING: coef() and vcov() have mismatched dimensions for sunab models.
+# Use sunab_beta_vcv() which returns properly matched beta and sigma.
+bv    <- HonestDiD:::sunab_beta_vcv(sa_model)
+beta  <- bv$beta
+sigma <- bv$sigma
+tVec  <- extract_time_periods(names(coef(sa_model)))
 
 # What linear trend slope would we detect with 50% power?
 slope_50 <- slope_for_power(
@@ -130,7 +136,7 @@ pt_results <- pretrends(betahat = betahat, sigma = sigma,
 print(pt_results$event_plot)
 ```
 
-> **Diagonal covariance limitation**: `diag(se^2)` assumes zero cross-period correlation. This is an approximation — actual coefficient correlations may cause power to be over- or understated. For analyses where precise power calculations are critical, use SA or BJS (which provide a full VCOV via `vcov()`). If SA is unstable for your data (e.g., small cohorts), the CS diagonal approximation is the best available option.
+> **Diagonal covariance limitation**: `diag(se^2)` assumes zero cross-period correlation. This is an approximation — actual coefficient correlations may cause power to be over- or understated. For analyses where precise power calculations are critical, use SA (which provides a full VCOV via `HonestDiD:::sunab_beta_vcv()`). If SA is unstable for your data (e.g., small cohorts), the CS diagonal approximation is the best available option.
 
 ### Handling Singular Covariance Matrix from CS
 
@@ -165,15 +171,18 @@ Absolute slope thresholds (e.g., "0.05 is large") are **scale-dependent** and me
 
 ```r
 assess_power_context <- function(slope_50, tVec, att_estimate) {
-  # Cumulative bias at treatment onset (t=0): sum of pre-treatment trend
+  # Bias at treatment onset (t=0): slope × number of pre-periods
+  # This measures the total pre-treatment trend deviation at the longest lead
   pre_periods <- tVec[tVec < 0]
-  cumulative_bias <- abs(slope_50 * sum(pre_periods))
+  cumulative_bias <- abs(slope_50 * length(pre_periods))
   bias_ratio <- cumulative_bias / abs(att_estimate)
 
-  quality <- if (bias_ratio < 0.05) "EXCELLENT"
-             else if (bias_ratio < 0.25) "GOOD"
-             else if (bias_ratio < 1.0) "MODERATE"
-             else "POOR"
+  quality <- {
+    if (bias_ratio < 0.05) "EXCELLENT"
+    else if (bias_ratio < 0.25) "GOOD"
+    else if (bias_ratio < 1.0) "MODERATE"
+    else "POOR"
+  }
 
   cat(sprintf("Detectable slope at 50%% power: %.4f\n", slope_50))
   cat(sprintf("Cumulative bias at t=0:        %.4f\n", cumulative_bias))

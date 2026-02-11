@@ -176,11 +176,15 @@ Quantify what violations your design can detect:
 library(pretrends)
 
 # Get beta and sigma from a robust estimator (e.g., fixest)
+# NOTE: sunab() drops rows where gname is NA. Convert never-treated to Inf first.
 sa_es <- feols(l_homicide ~ sunab(effyear, year) | sid + year,
                data = castle, se = "cluster")
-beta  <- coef(sa_es)
-sigma <- vcov(sa_es)
-tVec  <- as.numeric(gsub("year::", "", names(beta)))
+# WARNING: coef() and vcov() have mismatched dimensions for sunab models.
+# Use sunab_beta_vcv() which returns properly matched beta and sigma.
+bv    <- HonestDiD:::sunab_beta_vcv(sa_es)
+beta  <- bv$beta
+sigma <- bv$sigma
+tVec  <- as.numeric(gsub("year::", "", names(coef(sa_es))))
 
 # Slope of linear trend detectable with 50% power
 slope_50 <- slope_for_power(sigma = sigma, targetPower = 0.50,
@@ -200,15 +204,13 @@ Construct confidence intervals robust to specified levels of parallel trends vio
 ```r
 library(HonestDiD)
 
-pre_periods  <- which(tVec < -1)
+# sunab_beta_vcv() already excludes the base period (-1), so tVec has no -1.
+# Use tVec < 0 for pre-periods (not < -1).
+pre_periods  <- which(tVec < 0)
 post_periods <- which(tVec >= 0)
-base_period  <- which(tVec == -1)
-
-# Subset to pre + post (exclude base period)
-keep <- c(pre_periods, post_periods)
 
 honest_results <- createSensitivityResults_relativeMagnitudes(
-  betahat = beta[keep], sigma = sigma[keep, keep],
+  betahat = beta, sigma = sigma,
   numPrePeriods = length(pre_periods),
   numPostPeriods = length(post_periods),
   Mbarvec = seq(0.5, 2, by = 0.5))

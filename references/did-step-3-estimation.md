@@ -30,7 +30,7 @@ This file covers the five core heterogeneity-robust estimators for staggered DiD
 | Package | Function | Approach | Speed | Control Group | Data Requirement |
 |---------|----------|----------|-------|---------------|------------------|
 | `did` | `att_gt()` + `aggte()` | Callaway-Sant'Anna | Moderate | Not-yet or never | gname = 0 for never-treated |
-| `fixest` | `feols()` + `sunab()` | Sun-Abraham | Very fast | Never or last cohort | NA OK for gname |
+| `fixest` | `feols()` + `sunab()` | Sun-Abraham | Very fast | Never or last cohort | Inf for never-treated (NA drops rows) |
 | `didimputation` | `did_imputation()` | Borusyak-Jaravel-Spiess | Moderate | Not-yet-treated | Balanced panel; data.table; gname = max(t)+10 |
 | `did2s` | `did2s()` | Gardner two-stage | Fast | Not-yet-treated | Binary `treat` indicator |
 | `staggered` | `staggered()` | Roth-Sant'Anna | Moderate | Not-yet-treated | gname = Inf for never-treated |
@@ -135,9 +135,8 @@ If `sunab()` is unavailable, your installed `fixest` is too old for this workflo
 
 ### Data Preparation
 ```r
-# SA can work with NA for never-treated
-# If needed, add cohort variable:
-df$cohort <- df$first_treat
+# sunab() drops rows where first_treat is NA — convert to Inf for never-treated
+df$first_treat[is.na(df$first_treat)] <- Inf
 ```
 
 ### Complete Example
@@ -159,9 +158,12 @@ iplot(sa_out,
       xlab = "Periods Relative to Treatment",
       ylab = "Treatment Effect")
 
-# Extract coefficients for use with HonestDiD/pretrends
-beta  <- coef(sa_out)
-sigma <- vcov(sa_out)
+# Extract matched beta/sigma for HonestDiD/pretrends
+# WARNING: coef() and vcov() have mismatched dimensions for sunab models.
+# Use sunab_beta_vcv() which returns properly matched beta and sigma.
+bv    <- HonestDiD:::sunab_beta_vcv(sa_out)
+beta  <- bv$beta
+sigma <- bv$sigma
 ```
 
 > **Weights**: `feols(..., weights = ~W)` uses formula syntax (not a string).
@@ -344,10 +346,9 @@ install.packages("did2s")
 
 ### Data Preparation
 ```r
-# Gardner needs an explicit binary treat indicator
-df$treat <- ifelse(df$first_treat > 0 & df$year >= df$first_treat, 1, 0)
-# Never-treated units:
-df$treat[is.na(df$first_treat) | df$first_treat == 0] <- 0
+# Gardner needs an explicit binary treat indicator (handle NAs for never-treated)
+df$treat <- ifelse(!is.na(df$first_treat) & df$first_treat > 0 &
+                   df$year >= df$first_treat, 1, 0)
 ```
 
 ### Complete Example
@@ -672,6 +673,10 @@ When SA produces results without errors but disagrees with CS/Gardner, the issue
 
 ```r
 diagnose_sa_reliability <- function(sa_model, cs_overall_att) {
+  # NOTE: vcov() returns the disaggregated (cohort x period) VCOV, which is
+  # larger than coef() (aggregated event-time). This is intentional here —
+  # we check the raw VCOV for problems. For downstream analysis (HonestDiD,
+  # pretrends), use HonestDiD:::sunab_beta_vcv() instead.
   sigma <- vcov(sa_model)
   beta  <- coef(sa_model)
   issues <- character()
