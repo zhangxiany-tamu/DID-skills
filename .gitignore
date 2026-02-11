@@ -1,0 +1,72 @@
+# === Project ===
+CLAUDE.md
+
+# === OS files ===
+.DS_Store
+Thumbs.db
+Desktop.ini
+*~
+.Spotlight-V100
+.Trashes
+
+# === R build artifacts ===
+*.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+*.Rcheck/
+*.tar.gz
+*.rda
+*.rds
+*.RData
+*.rdb
+*.rdx
+*.o
+*.so
+*.dll
+*.dylib
+
+# === LaTeX artifacts ===
+*.aux
+*.log
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+*.bbl
+*.blg
+*.out
+*.toc
+*.nav
+*.snm
+*.vrb
+
+# === Stata (project is R-only) ===
+*.dta
+*.ado
+*.do
+*.sthlp
+*.stswp
+*.smcl
+
+# === Binary/media files ===
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.pdf
+*.ico
+*.svg
+
+# === Web artifacts ===
+*.html
+*.css
+*.js
+*.map
+*.xml
+*.json
+
+# === Other non-text ===
+*.ipynb
+*.py
+*.cpp
+*.pkg

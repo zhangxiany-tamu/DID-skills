@@ -1,0 +1,524 @@
+# Step 1: Assess Treatment Structure
+
+## Contents
+- [Goal](#goal)
+- [Master Profiling Function](#master-profiling-function)
+- [Treatment Pattern Examples](#treatment-pattern-examples)
+- [Panel Integrity Checks](#panel-integrity-checks)
+- [Never-Treated Coding Conversion](#never-treated-coding-conversion)
+- [Cohort Size Summary Table](#cohort-size-summary-table)
+- [Treatment Rollout Visualization](#treatment-rollout-visualization)
+- [Complete Step 1 Workflow Example](#complete-step-1-workflow-example)
+- [Decision Routing Summary](#decision-routing-summary)
+- [Packages Used Next](#packages-used-next)
+- [Read Next](#read-next)
+
+Use this step before diagnostics/estimation to classify the treatment design and route to the correct DiD workflow.
+
+## Goal
+
+Programmatically profile the dataset's treatment variable and panel structure to determine which estimators are valid. The output is a routing decision: standard staggered DiD pipeline (Steps 2-5) vs. advanced methods.
+
+---
+
+## Master Profiling Function
+
+Run this on any panel dataset to get a full treatment structure report:
+
+```r
+profile_did_design <- function(data, id_var, time_var, treat_timing_var, treat_var = NULL) {
+  cat("========================================\n")
+  cat("  DiD Treatment Structure Profile\n")
+  cat("========================================\n\n")
+
+  ids   <- data[[id_var]]
+  times <- data[[time_var]]
+  g     <- data[[treat_timing_var]]
+
+  n_units   <- length(unique(ids))
+  n_periods <- length(unique(times))
+  n_obs     <- nrow(data)
+
+  cat(sprintf("Units: %d | Periods: %d | Observations: %d\n", n_units, n_periods, n_obs))
+
+  # --- Panel balance ---
+  expected <- n_units * n_periods
+  is_balanced <- (n_obs == expected)
+  cat(sprintf("Panel balance: %s (%d of %d expected obs)\n\n",
+              ifelse(is_balanced, "BALANCED", "UNBALANCED"), n_obs, expected))
+
+  # --- Treatment timing groups ---
+  # Get one gname per unit (first non-NA value)
+  unit_g <- tapply(g, ids, function(x) {
+    vals <- unique(x[!is.na(x)])
+    if (length(vals) == 0) return(NA_real_)
+    vals[1]
+  })
+
+  never_treated  <- sum(is.na(unit_g) | unit_g == 0 | is.infinite(unit_g))
+  ever_treated   <- n_units - never_treated
+  treat_dates    <- sort(unique(unit_g[!is.na(unit_g) & unit_g != 0 & !is.infinite(unit_g)]))
+  n_cohorts      <- length(treat_dates)
+
+  cat(sprintf("Ever-treated units: %d (%.1f%%)\n", ever_treated, 100 * ever_treated / n_units))
+  cat(sprintf("Never-treated units: %d (%.1f%%)\n", never_treated, 100 * never_treated / n_units))
+  cat(sprintf("Treatment cohorts: %d\n", n_cohorts))
+  if (n_cohorts <= 10) {
+    cat(sprintf("Cohort timing: %s\n", paste(treat_dates, collapse = ", ")))
+  } else {
+    cat(sprintf("Cohort timing (first 10): %s, ...\n", paste(head(treat_dates, 10), collapse = ", ")))
+  }
+  cat("\n")
+
+  # --- Staggering classification ---
+  if (n_cohorts == 0) {
+    timing <- "NO_TREATMENT"
+    cat("Timing: NO TREATMENT VARIATION (no treated units found)\n")
+  } else if (n_cohorts == 1) {
+    timing <- "CANONICAL"
+    cat("Timing: CANONICAL (single treatment date)\n")
+  } else {
+    timing <- "STAGGERED"
+    cat("Timing: STAGGERED (multiple treatment dates)\n")
+  }
+
+  # --- Treatment type: binary absorbing vs reversible ---
+  # Reversal detection requires the actual binary treatment variable (treat_var),
+  # not the timing variable. Timing-based flags (time >= g) are monotone by
+  # construction and cannot detect reversals.
+  is_absorbing <- TRUE
+  reversal_units <- character()
+  if (!is.null(treat_var)) {
+    for (uid in unique(ids[!is.na(unit_g[as.character(ids)]) &
+                            unit_g[as.character(ids)] != 0 &
+                            !is.infinite(unit_g[as.character(ids)])])) {
+      mask <- ids == uid
+      unit_data <- data[mask, ]
+      unit_data <- unit_data[order(unit_data[[time_var]]), ]
+      treat_vals <- unit_data[[treat_var]]
+      diffs <- diff(treat_vals)
+      # A reversal is any drop in treatment (e.g. 1→0)
+      if (any(diffs < 0)) {
+        is_absorbing <- FALSE
+        reversal_units <- c(reversal_units, as.character(uid))
+      }
+    }
+  }
+
+  # Also check if treatment variable itself is non-binary
+  treat_vals <- sort(unique(g[!is.na(g) & g != 0 & !is.infinite(g)]))
+
+  if (is.null(treat_var)) {
+    cat("Absorbing: ASSUMED (supply treat_var to detect reversals)\n")
+  } else {
+    cat(sprintf("Absorbing: %s\n", ifelse(is_absorbing, "YES", "NO")))
+    if (!is_absorbing) {
+      cat(sprintf("  Reversal units: %d (e.g., %s)\n",
+                  length(reversal_units),
+                  paste(head(reversal_units, 5), collapse = ", ")))
+    }
+  }
+
+  # --- Missing data ---
+  n_missing_outcome <- sum(is.na(data[[time_var]]))  # placeholder; user can extend
+  n_missing_g       <- sum(is.na(g))
+  cat(sprintf("\nMissing treatment timing: %d obs (%.1f%%)\n",
+              n_missing_g, 100 * n_missing_g / n_obs))
+
+  # --- Never-treated coding ---
+  has_zero  <- any(g == 0, na.rm = TRUE)
+  has_na    <- any(is.na(g))
+  has_inf   <- any(is.infinite(g))
+  cat(sprintf("Never-treated coding: 0=%s NA=%s Inf=%s\n",
+              ifelse(has_zero, "yes", "no"),
+              ifelse(has_na, "yes", "no"),
+              ifelse(has_inf, "yes", "no")))
+
+  # --- Routing decision ---
+  cat("\n========================================\n")
+  cat("  ROUTING DECISION\n")
+  cat("========================================\n\n")
+
+  if (timing == "NO_TREATMENT") {
+    cat("ERROR: No treatment variation detected. Cannot run DiD.\n")
+    route <- "NONE"
+  } else if (!is_absorbing) {
+    cat("ROUTE: Advanced Methods (treatment is reversible/non-absorbing)\n")
+    cat("  -> Use DIDmultiplegt, DIDmultiplegtDYN, or etwfe\n")
+    cat("  -> See: did-advanced-methods.md\n")
+    route <- "ADVANCED"
+  } else if (timing == "CANONICAL") {
+    cat("ROUTE: Standard 2x2 DiD\n")
+    cat("  -> TWFE is valid (single treatment date, no forbidden comparisons)\n")
+    cat("  -> Still recommended: run parallel trends checks (Steps 4-5)\n")
+    cat("  -> Skip Step 2 diagnostics (no staggering to diagnose)\n")
+    route <- "CANONICAL"
+  } else {
+    cat("ROUTE: Staggered DiD Pipeline (Steps 2-5)\n")
+    cat("  -> Step 2: Diagnose TWFE problems (bacondecomp, TwoWayFEWeights)\n")
+    cat("  -> Step 3: Robust estimators (did, fixest/sunab, didimputation, did2s, staggered)\n")
+    cat("  -> Step 4: Power analysis (pretrends)\n")
+    cat("  -> Step 5: Sensitivity analysis (HonestDiD)\n")
+    if (never_treated == 0) {
+      cat("\n  WARNING: No never-treated units. Some estimators require them.\n")
+      cat("  -> CS: use control_group = 'notyettreated'\n")
+      cat("  -> SA: may need last-treated cohort as reference\n")
+    }
+    if (!is_balanced) {
+      cat("\n  WARNING: Unbalanced panel.\n")
+      cat("  -> BJS (didimputation) requires a balanced panel; balance first or skip BJS.\n")
+    }
+    route <- "STAGGERED"
+  }
+
+  invisible(list(
+    timing       = timing,
+    route        = route,
+    n_units      = n_units,
+    n_periods    = n_periods,
+    n_cohorts    = n_cohorts,
+    is_balanced  = is_balanced,
+    is_absorbing = is_absorbing,
+    ever_treated = ever_treated,
+    never_treated = never_treated,
+    cohort_dates = treat_dates
+  ))
+}
+```
+
+---
+
+## Treatment Pattern Examples
+
+### Pattern 1: Canonical (Single Treatment Date)
+
+All treated units adopt at the same time. Standard 2x2 DiD is valid.
+
+```r
+library(fixest)
+
+# Simulate canonical DiD
+set.seed(42)
+n_units <- 100; n_periods <- 10; treat_date <- 6
+df_canon <- expand.grid(unit = 1:n_units, time = 1:n_periods)
+df_canon$treated_unit <- as.integer(df_canon$unit <= 50)
+df_canon$post <- as.integer(df_canon$time >= treat_date)
+df_canon$first_treat <- ifelse(df_canon$treated_unit == 1, treat_date, 0)
+df_canon$y <- 1 + 0.5 * df_canon$treated_unit + 0.3 * df_canon$time +
+              2 * df_canon$treated_unit * df_canon$post + rnorm(nrow(df_canon))
+
+# Profile
+profile <- profile_did_design(df_canon, "unit", "time", "first_treat")
+# -> ROUTE: Standard 2x2 DiD
+
+# Standard TWFE is valid here
+model <- feols(y ~ treated_unit:post | unit + time, data = df_canon, cluster = ~unit)
+summary(model)
+```
+
+### Pattern 2: Staggered Adoption (Binary Absorbing)
+
+Units adopt treatment at different times and never revert. This is the most common case in applied work. Requires robust estimators.
+
+```r
+library(did)
+
+data(mpdta)
+
+# Profile
+profile <- profile_did_design(mpdta, "countyreal", "year", "first.treat")
+# -> ROUTE: Staggered DiD Pipeline (Steps 2-5)
+
+# Proceed to Step 2 diagnostics, then Step 3 estimation
+```
+
+### Pattern 3: Reversible Treatment
+
+Units can switch treatment on and off. Standard staggered DiD estimators are invalid. Route to advanced methods.
+
+```r
+# Simulate reversible treatment
+set.seed(42)
+n_units <- 50; n_periods <- 10
+df_rev <- expand.grid(unit = 1:n_units, time = 1:n_periods)
+# Some units turn treatment on and off
+df_rev$treatment_level <- 0
+for (uid in 1:25) {
+  mask <- df_rev$unit == uid
+  on_period  <- sample(3:6, 1)
+  off_period <- on_period + sample(2:3, 1)
+  df_rev$treatment_level[mask & df_rev$time >= on_period & df_rev$time < off_period] <- 1
+}
+df_rev$first_treat <- ave(
+  ifelse(df_rev$treatment_level == 1, df_rev$time, NA),
+  df_rev$unit, FUN = function(x) min(x, na.rm = TRUE)
+)
+df_rev$first_treat[is.infinite(df_rev$first_treat)] <- 0
+
+# Profile detects reversals (pass treat_var to enable reversal detection)
+profile <- profile_did_design(df_rev, "unit", "time", "first_treat",
+                              treat_var = "treatment_level")
+# -> ROUTE: Advanced Methods (treatment is reversible)
+# -> Use DIDmultiplegt or DIDmultiplegtDYN
+```
+
+---
+
+## Panel Integrity Checks
+
+Run these before any DiD estimation to catch common data issues.
+
+### Check 1: Unique Unit-Time Observations
+
+```r
+check_panel_uniqueness <- function(data, id_var, time_var) {
+  dups <- duplicated(data[, c(id_var, time_var)]) |
+          duplicated(data[, c(id_var, time_var)], fromLast = TRUE)
+  n_dups <- sum(dups)
+  if (n_dups > 0) {
+    warning(sprintf("%d duplicate unit-time observations found. Panel must have unique (id, time) pairs.", n_dups))
+    dup_examples <- unique(data[dups, c(id_var, time_var)])[1:min(5, sum(dups)), ]
+    print(dup_examples)
+  } else {
+    cat("OK: All unit-time pairs are unique.\n")
+  }
+  n_dups == 0
+}
+```
+
+### Check 2: Treatment Timing Consistency
+
+Each unit's treatment timing variable should be constant across all its observations:
+
+```r
+check_timing_consistency <- function(data, id_var, treat_timing_var) {
+  inconsistent <- character()
+  for (uid in unique(data[[id_var]])) {
+    vals <- unique(data[[treat_timing_var]][data[[id_var]] == uid])
+    vals <- vals[!is.na(vals)]
+    if (length(vals) > 1) {
+      inconsistent <- c(inconsistent, as.character(uid))
+    }
+  }
+  if (length(inconsistent) > 0) {
+    warning(sprintf(
+      "%d unit(s) have inconsistent treatment timing (e.g., %s). The gname variable must be constant within each unit.",
+      length(inconsistent), paste(head(inconsistent, 5), collapse = ", ")))
+  } else {
+    cat("OK: Treatment timing is constant within each unit.\n")
+  }
+  length(inconsistent) == 0
+}
+```
+
+### Check 3: Panel Balance Report
+
+```r
+check_panel_balance <- function(data, id_var, time_var) {
+  obs_per_unit <- table(data[[id_var]])
+  n_periods <- length(unique(data[[time_var]]))
+
+  fully_observed <- sum(obs_per_unit == n_periods)
+  partially_observed <- sum(obs_per_unit < n_periods)
+  n_units <- length(obs_per_unit)
+
+  cat(sprintf("Total units: %d\n", n_units))
+  cat(sprintf("Total periods: %d\n", n_periods))
+  cat(sprintf("Fully observed: %d (%.1f%%)\n", fully_observed, 100 * fully_observed / n_units))
+  cat(sprintf("Partially observed: %d (%.1f%%)\n", partially_observed, 100 * partially_observed / n_units))
+
+  if (partially_observed > 0) {
+    min_obs <- min(obs_per_unit)
+    cat(sprintf("Min observations per unit: %d (of %d periods)\n", min_obs, n_periods))
+    cat("Note: BJS (didimputation) requires a balanced panel.\n")
+  }
+
+  invisible(list(
+    is_balanced = (partially_observed == 0),
+    n_units = n_units,
+    n_periods = n_periods,
+    fully_observed = fully_observed
+  ))
+}
+```
+
+---
+
+## Never-Treated Coding Conversion
+
+Each estimator expects a different coding for never-treated units. Use this helper to convert between conventions:
+
+```r
+recode_never_treated <- function(data, gname_var, target = c("zero", "na", "inf", "max_plus_10")) {
+  target <- match.arg(target)
+  g <- data[[gname_var]]
+
+  # Identify never-treated (could be 0, NA, or Inf in source data)
+  is_never <- is.na(g) | g == 0 | is.infinite(g)
+
+  data[[gname_var]] <- switch(target,
+    "zero"        = { g[is_never] <- 0;                        g },
+    "na"          = { g[is_never] <- NA_real_;                  g },
+    "inf"         = { g[is_never] <- Inf;                       g },
+    "max_plus_10" = { g[is_never] <- max(g[!is_never], na.rm = TRUE) + 10; g }
+  )
+  data
+}
+
+# Usage by estimator:
+# df_cs   <- recode_never_treated(df, "first_treat", target = "zero")       # did (CS)
+# df_sa   <- recode_never_treated(df, "first_treat", target = "na")         # fixest (SA)
+# df_bjs  <- recode_never_treated(df, "first_treat", target = "max_plus_10") # didimputation (BJS)
+# df_stag <- recode_never_treated(df, "first_treat", target = "inf")        # staggered
+```
+
+---
+
+## Cohort Size Summary Table
+
+Useful for checking whether any treatment cohort is too small for reliable estimation:
+
+```r
+cohort_summary <- function(data, id_var, treat_timing_var) {
+  unit_g <- tapply(data[[treat_timing_var]], data[[id_var]], function(x) {
+    vals <- unique(x[!is.na(x)])
+    if (length(vals) == 0) return(NA_real_)
+    vals[1]
+  })
+
+  tbl <- sort(table(unit_g), decreasing = TRUE)
+  df_out <- data.frame(
+    cohort = names(tbl),
+    n_units = as.integer(tbl),
+    pct = round(100 * as.integer(tbl) / length(unit_g), 1)
+  )
+  # Label never-treated
+  df_out$label <- ifelse(
+    df_out$cohort %in% c("0", "NA", "Inf"),
+    "never-treated", "treated"
+  )
+  cat("Cohort Size Summary:\n")
+  print(df_out, row.names = FALSE)
+  cat(sprintf("\nSmallest treated cohort: %d units\n",
+              min(df_out$n_units[df_out$label == "treated"])))
+
+  invisible(df_out)
+}
+```
+
+---
+
+## Treatment Rollout Visualization
+
+Before running any profiling function or estimator, **visualize the treatment design** with `panelView`. This covers Items 1 and 3 of Sant'Anna's practitioner checklist.
+
+### Treatment Status Heatmap
+
+Shows which units are treated in which periods. Use `by.timing = TRUE` for staggered designs.
+
+```r
+library(panelView)
+library(did)
+
+data(mpdta)
+
+# Create binary treatment indicator from timing variable
+mpdta$treat <- ifelse(mpdta$first.treat > 0 & mpdta$year >= mpdta$first.treat, 1, 0)
+
+# Treatment rollout heatmap grouped by cohort
+panelview(lemp ~ treat, data = mpdta,
+          index = c("countyreal", "year"),
+          type = "treat", by.timing = TRUE,
+          main = "Treatment Rollout: Minimum Wage Policy")
+```
+
+**What to look for:**
+- Clean staggered pattern (blocks of shading starting at different times)
+- Units that switch treatment on and off (signals reversible treatment — route to advanced methods)
+- Extremely small cohorts (may cause estimation instability)
+- Missing cells (gaps in the panel)
+
+### Outcome Trajectories by Treatment Status
+
+Visual pre-trend check: do treated and control groups move in parallel before treatment?
+
+```r
+# Outcome trajectories separated by treatment status
+panelview(lemp ~ treat, data = mpdta,
+          index = c("countyreal", "year"),
+          type = "outcome", by.group = TRUE,
+          main = "Employment Trajectories: Treated vs Control")
+```
+
+**What to look for:**
+- Parallel movement of treated and control groups before treatment onset
+- Divergence starting at or after treatment (suggests a treatment effect)
+- Pre-treatment divergence (red flag for parallel trends assumption)
+- Outlier units with extreme trajectories
+
+> For full `panelview()` argument details and large-panel strategies, see
+> `references/packages/panelView_quick_start.md`.
+
+---
+
+## Complete Step 1 Workflow Example
+
+```r
+# --- Full Step 1 walkthrough with real data ---
+library(did)
+library(panelView)
+data(mpdta)
+
+# 1. Panel integrity checks
+check_panel_uniqueness(mpdta, "countyreal", "year")
+check_timing_consistency(mpdta, "countyreal", "first.treat")
+check_panel_balance(mpdta, "countyreal", "year")
+
+# 2. Profile treatment structure
+profile <- profile_did_design(mpdta, "countyreal", "year", "first.treat")
+
+# 2b. Visualize treatment rollout
+mpdta$treat <- ifelse(mpdta$first.treat > 0 & mpdta$year >= mpdta$first.treat, 1, 0)
+panelview(lemp ~ treat, data = mpdta, index = c("countyreal", "year"),
+          type = "treat", by.timing = TRUE, main = "Treatment Rollout")
+panelview(lemp ~ treat, data = mpdta, index = c("countyreal", "year"),
+          type = "outcome", by.group = TRUE, main = "Outcome Trajectories")
+
+# 3. Inspect cohort sizes
+cohort_summary(mpdta, "countyreal", "first.treat")
+
+# 4. Follow routing decision
+if (profile$route == "STAGGERED") {
+  cat("\nProceeding to Step 2: TWFE diagnostics...\n")
+  # -> did-step-2-diagnostics.md
+} else if (profile$route == "CANONICAL") {
+  cat("\nProceeding to Step 3 (TWFE valid) or Steps 4-5 for pre-trends...\n")
+} else if (profile$route == "ADVANCED") {
+  cat("\nProceeding to Advanced Methods...\n")
+  # -> did-advanced-methods.md
+}
+```
+
+---
+
+## Decision Routing Summary
+
+| Treatment Pattern | Staggered? | Absorbing? | Route | Packages |
+|---|---|---|---|---|
+| Single date, binary | No | Yes | Standard 2x2 DiD | `fixest`, `DRDID` |
+| Multiple dates, binary | Yes | Yes | Staggered pipeline (Steps 2-5) | `did`, `fixest`, `didimputation`, `did2s`, `staggered` |
+| Reversible / switches on-off | Either | No | Advanced methods | `DIDmultiplegt`, `DIDmultiplegtDYN`, `etwfe` |
+| Continuous / multi-valued | Either | Either | Advanced methods | `DIDmultiplegt`, `DIDmultiplegtDYN` |
+| Synthetic control hybrid | Yes | Yes | Advanced methods | `gsynth`, `synthdid` |
+
+## Packages Used Next
+
+- Step 2 diagnostics: `bacondecomp`, `TwoWayFEWeights`
+- Step 3 robust estimation: `did`, `fixest`, `didimputation`, `did2s`, `staggered`
+- Advanced branch: `DIDmultiplegt`, `DIDmultiplegtDYN`, `gsynth`, `synthdid`, `etwfe`, `YatchewTest`
+
+## Read Next
+
+- `did-step-2-diagnostics.md`
+- `did-step-3-estimation.md`
+- `did-advanced-methods.md`
