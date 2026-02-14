@@ -2,12 +2,13 @@
 name: did-analysis
 description: >
   Guides practitioners through modern Difference-in-Differences (DiD) causal
-  inference analysis in R. Implements the 5-step workflow from Roth et al. (2023):
-  diagnose TWFE problems, select and run heterogeneity-robust estimators
-  (Callaway-Sant'Anna, Sun-Abraham, BJS, Gardner, etc.), conduct power analysis
-  for pre-trends, and perform HonestDiD sensitivity analysis. Use when the user
-  needs help with DiD estimation, event studies, staggered treatment adoption,
-  parallel trends testing, or TWFE diagnostics.
+  inference analysis in R. Provides an expanded modern 5-step workflow with
+  practical extensions: diagnose TWFE problems, select and run
+  heterogeneity-robust estimators (Callaway-Sant'Anna, Sun-Abraham, BJS,
+  Gardner, etc.), conduct power analysis for pre-trends, and perform HonestDiD
+  sensitivity analysis. Use when the user needs help with DiD estimation, event
+  studies, staggered treatment adoption, parallel trends testing, or TWFE
+  diagnostics.
 metadata:
   author: Xianyang Zhang
   version: 1.0.0

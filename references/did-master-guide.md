@@ -8,7 +8,7 @@
 - [5. Step-by-Step Workflow Checklist](#5-step-by-step-workflow-checklist)
 - [6. Best Practices for Inference](#6-best-practices-for-inference)
 
-Condensed from Roth et al. (2023) framework. This guide covers the complete workflow for credible DiD analysis in R.
+Built from modern DiD literature and extended with additional practical guidance developed in this skill. This guide covers the complete workflow for credible DiD analysis in R.
 
 ## 1. From Canonical DiD to Modern Best Practice
 

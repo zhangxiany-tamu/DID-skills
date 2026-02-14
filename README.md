@@ -1,8 +1,8 @@
-# DID Analysis Skill for Claude Code
+# DID Analysis Agent Skill
 
-A Claude Code skill that guides practitioners through modern Difference-in-Differences (DiD) causal inference analysis in R.
+A general agent skill that guides practitioners through modern Difference-in-Differences (DiD) causal inference analysis in R.
 
-Covers the full workflow from Roth et al. (2023): treatment structure assessment, TWFE diagnostics, heterogeneity-robust estimation, power analysis for pre-trends, and HonestDiD sensitivity analysis.
+Covers an expanded modern DiD workflow: treatment structure assessment, TWFE diagnostics, heterogeneity-robust estimation, power analysis for pre-trends, HonestDiD sensitivity analysis, and practical extensions developed in this skill.
 
 ## Packages Covered
 
@@ -38,7 +38,7 @@ git subtree pull --prefix=.claude/skills/did-analysis \
 
 ## Usage
 
-Once installed, the skill activates automatically when you discuss DiD topics with Claude Code. You can also invoke it directly:
+Once installed, the skill activates automatically when you discuss DiD topics. You can also invoke it directly:
 
 ```
 /did-analysis
