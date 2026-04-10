@@ -12,6 +12,8 @@
   - [CS (did) Path](#cs-did-path)
 - [Final Evidence Assessment](#final-evidence-assessment)
 
+Treat this file as the authoritative Step 5 workflow contract; `SKILL.md` should only route here.
+
 ## Coefficient Extraction Cookbook
 
 Before running HonestDiD or pretrends, you need three objects from your estimator:

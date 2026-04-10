@@ -8,7 +8,7 @@
   - [Pre-Period Window Selection](#pre-period-window-selection)
   - [Fundamentally Underpowered Analysis](#fundamentally-underpowered-analysis)
 
-This step focuses on statistical power for pre-trend testing. For coefficient extraction patterns and period validation helpers, see `did-step-5-sensitivity-inference.md`.
+This step focuses on statistical power for pre-trend testing. Treat this file as the authoritative Step 4 workflow contract; `SKILL.md` should only route here. For coefficient extraction patterns and period validation helpers, see `did-step-5-sensitivity-inference.md`.
 
 ## pretrends: Power Analysis for Pre-Trend Tests
 

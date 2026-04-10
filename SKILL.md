@@ -2,500 +2,273 @@
 name: did-analysis
 description: >
   Guides practitioners through modern Difference-in-Differences (DiD) causal
-  inference analysis in R. Provides an expanded modern 5-step workflow with
-  practical extensions: diagnose TWFE problems, select and run
-  heterogeneity-robust estimators (Callaway-Sant'Anna, Sun-Abraham, BJS,
-  Gardner, etc.), conduct power analysis for pre-trends, and perform HonestDiD
-  sensitivity analysis. Use when the user needs help with DiD estimation, event
-  studies, staggered treatment adoption, parallel trends testing, or TWFE
-  diagnostics.
+  inference analysis in R. Routes users through a 5-step workflow for treatment
+  structure assessment, TWFE diagnostics, heterogeneity-robust estimation,
+  pre-trend power analysis, and HonestDiD sensitivity analysis.
 metadata:
   author: Xianyang Zhang
-  version: 1.0.0
+  version: 1.1.0
   category: statistics
   tags: [causal-inference, difference-in-differences, econometrics, R]
 ---
 
 ## Contents
 - [Progressive Disclosure](#progressive-disclosure)
-- [Before the Analysis](#before-the-analysis)
-  - [Quick-Start Decision Tree](#quick-start-decision-tree)
-  - [Data Requirements Checklist](#data-requirements-checklist)
-- [During the Analysis: The 5-Step Modern DiD Workflow](#during-the-analysis-the-5-step-modern-did-workflow)
+- [When To Use This Skill](#when-to-use-this-skill)
+- [Start Here](#start-here)
+- [The 5-Step Workflow](#the-5-step-workflow)
   - [Step 1: Assess Treatment Structure](#step-1-assess-treatment-structure)
   - [Step 2: Diagnose TWFE Problems](#step-2-diagnose-twfe-problems)
   - [Step 3: Choose and Run Robust Estimators](#step-3-choose-and-run-robust-estimators)
   - [Step 4: Power Analysis for Pre-Trends](#step-4-power-analysis-for-pre-trends)
-  - [Step 5: Sensitivity Analysis (HonestDiD) and Inference](#step-5-sensitivity-analysis-honestdid-and-inference)
-- [Personalized Method Selection Advice](#personalized-method-selection-advice)
-  - [By Treatment Pattern](#by-treatment-pattern)
-  - [By Sample Size](#by-sample-size)
-  - [By Priority](#by-priority)
-  - [Key Warnings at Each Step](#key-warnings-at-each-step)
-- [Cross-Package Coefficient Extraction Cookbook](#cross-package-coefficient-extraction-cookbook)
-- [Data Preparation Gotchas Per Estimator](#data-preparation-gotchas-per-estimator)
-- [Package Installation Reference](#package-installation-reference)
-- [Reference Files (references/)](#reference-files-references)
-  - [Step Guides](#step-guides)
-  - [Package Documentation (references/packages/)](#package-documentation-referencespackages)
-- [Simulating Test Data for DiD Analysis](#simulating-test-data-for-did-analysis)
+  - [Step 5: Sensitivity Analysis and Inference](#step-5-sensitivity-analysis-and-inference)
+- [High-Level Routing Rules](#high-level-routing-rules)
+- [Default Recommendations](#default-recommendations)
+- [Method Selection Heuristics](#method-selection-heuristics)
+- [Key Warnings at Each Step](#key-warnings-at-each-step)
+- [Common Data Coding Gotchas](#common-data-coding-gotchas)
+- [Reference Map](#reference-map)
 
 # Modern Difference-in-Differences Analysis Skill
 
 ## Progressive Disclosure
 
-Use this order to keep context small and targeted:
+Load only what the user needs:
 
-1. **SKILL.md (this file)**: Decision trees, code templates, and routing. Always loaded.
-2. **Step guides** (`references/did-step-{1-5}-*.md`): One step at a time. Use `references/did-advanced-methods.md` for non-standard settings.
-3. **Package quick starts** (`references/packages/*_quick_start.md`): Package overview, function map, and GitHub source pointers.
-4. **Full package docs** (`references/packages/*.md`): Argument-level CRAN documentation.
-5. **R source code**: Each `*_quick_start.md` lists the GitHub repo URL and key source files.
+1. **`SKILL.md`**: Always load first. It provides trigger conditions, routing logic, and the high-level workflow.
+2. **Step guides** (`references/did-step-{1-5}-*.md`): Load the current step's guide as the source of truth for execution details.
+3. **Advanced methods** (`references/did-advanced-methods.md`): Load when treatment is non-binary, reversible, continuous, or otherwise outside the core binary absorbing workflow.
+4. **Package quick starts** (`references/packages/*_quick_start.md`): Load when you need package orientation, key functions, or a compact function map.
+5. **Full package docs** (`references/packages/*.md`) and `*-additional.md`: Load only when argument-level details, implementation caveats, or source-derived behavior matter.
+6. **Troubleshooting** (`references/did-troubleshooting.md`): Load when installs fail, estimators error, or post-estimation objects are malformed.
 
----
+Do not load the whole repo by default. Keep context small and step-specific.
 
-## Before the Analysis
+## When To Use This Skill
 
-Verify these prerequisites before starting the 5-step workflow.
+Use this skill when the user needs help with:
 
-### Quick-Start Decision Tree
+- Difference-in-Differences design or estimation in R
+- Staggered treatment adoption
+- Event-study design or interpretation
+- TWFE diagnostics such as Bacon decomposition or negative weights
+- Choosing among `did`, `fixest`, `did2s`, `didimputation`, or `staggered`
+- `pretrends` power analysis
+- `HonestDiD` sensitivity analysis
+- Routing non-binary, continuous, or reversible treatment designs to the right alternative method
 
+Do not rely on this skill alone for:
+
+- Generic R package development or system administration
+- Non-DiD causal designs that need a different workflow
+- Running code inside this repo; all code blocks here are reference templates
+
+## Start Here
+
+Before recommending any estimator, confirm the minimum design facts:
+
+1. Panel identifiers exist: unit ID and time variable.
+2. The outcome is numeric and measured at the unit-time level.
+3. Treatment timing or treatment intensity is defined clearly.
+4. The user can state whether treatment is binary vs. non-binary and absorbing vs. reversible.
+5. The user has enough variation: more than one cohort, never-treated or not-yet-treated observations, or a justified alternative design.
+6. The user can describe the treatment level relative to the unit level, especially for state-treatment/county-outcome panels.
+
+Fast routing tree:
+
+```text
+Is treatment staggered across units?
+├─ NO
+│  ├─ Canonical 2x2 or single adoption date -> standard DiD is acceptable.
+│  └─ Block treatment for one treated aggregate -> consider synthdid / gsynth.
+└─ YES
+   ├─ Binary and absorbing?
+   │  ├─ YES -> Run the core 5-step workflow.
+   │  └─ NO  -> Route to DIDmultiplegt / DIDmultiplegtDYN and advanced methods.
+   └─ Unsure -> Step 1 first. Never pick an estimator before profiling the design.
 ```
-Is treatment staggered (units adopt at different times)?
-├─ NO → Standard canonical DiD (TWFE is fine). Go to Step 4.
-└─ YES → TWFE may be biased. Continue below.
-    │
-    Is treatment binary and absorbing (once treated, always treated)?
-    ├─ YES → Check cohort sizes (Step 1: cohort_summary).
-    │   ├─ All cohorts >= 5 units → All core estimators applicable.
-    │   └─ Any cohort < 5 units  → SA likely unstable; prefer CS or Gardner.
-    │         See references/did-step-3-estimation.md
-    └─ NO  → Treatment is non-binary, continuous, or reversible
-              Use DIDmultiplegt / DIDmultiplegtDYN
-              See references/did-advanced-methods.md
-```
 
-### Data Requirements Checklist
-
-Before running any DiD estimator, verify:
-
-1. **Panel structure**: Data has unit identifier (`idname`) and time variable (`tname`)
-2. **Treatment timing variable** (`gname`): Period when unit first receives treatment
-   - Never-treated units: coding depends on estimator (0, NA, or Inf -- see Data Prep section)
-3. **Outcome variable** (`yname`): Numeric, measured for all unit-time pairs
-4. **No anticipation**: Units do not change behavior before treatment onset
-5. **Sufficient variation**: Multiple treatment cohorts and/or never-treated units
-6. **Panel balance**: Some estimators require balanced panels (BJS especially)
-7. **Numeric identifiers**: Unit and group IDs must be numeric for most estimators and diagnostics.
-   Convert character IDs: `df$unit_num <- as.integer(as.factor(df$unit_id))`
-
----
-
-## During the Analysis: The 5-Step Modern DiD Workflow
+## The 5-Step Workflow
 
 ### Step 1: Assess Treatment Structure
 
-Determine whether treatment is:
-- **Binary absorbing** (once treated, always treated) -- use core estimators
-- **Non-binary / reversible / continuous** -- use DIDmultiplegt family; **Staggered** vs. **canonical**
+Load: `references/did-step-1-treatment-structure.md`
 
-See `references/did-step-1-treatment-structure.md` for routing details before diagnostics.
+Goal:
 
-> **Visualize first**: Plot treatment rollout with `panelView` and outcome
-> trajectories by cohort before proceeding to diagnostics.
+- Classify the design before diagnostics or estimation.
+- Decide whether the user stays on the core binary absorbing pipeline or must route to advanced methods.
+- Catch multilevel treatment structure, timing problems, already-treated units, reversals, and unbalanced-panel constraints early.
+
+Expected output:
+
+- A design label such as canonical 2x2, staggered binary absorbing, multilevel treatment, non-binary/continuous, or reversible treatment.
+- A recommended next step: continue to Step 2 or jump to `did-advanced-methods.md`.
 
 ### Step 2: Diagnose TWFE Problems
 
-Run diagnostic tests to quantify TWFE bias. See `references/did-step-2-diagnostics.md` for full details.
+Load: `references/did-step-2-diagnostics.md`
 
-**Bacon Decomposition** (forbidden comparison weight):
-```r
-library(bacondecomp)
-bacon_out <- bacon(outcome ~ treatment, data = df,
-                   id_var = "unit_id", time_var = "time")
-# Check: what share of weight is on "Later vs Earlier" comparisons?
-forbidden <- bacon_out[bacon_out$type == "Later vs Earlier Treated", ]
-cat(sprintf("Forbidden comparison weight: %.1f%%\n", 100 * sum(forbidden$weight)))
-```
+Use this step when the design is staggered, binary, and absorbing and TWFE is still on the table.
 
-**TwoWayFEWeights** (negative weight share):
-```r
-library(TwoWayFEWeights)
-wt <- twowayfeweights(df, Y = "outcome", G = "unit_id",
-                       T = "time", D = "treatment", type = "feTR")
-# Extract negative weight share (absolute weight sums, not counts)
-neg_share <- abs(wt$sum_minus) / (wt$sum_plus + abs(wt$sum_minus)) * 100
-cat(sprintf("Negative weight share: %.1f%%\n", neg_share))
-```
+Core diagnostics:
 
-> See `references/did-step-2-diagnostics.md` for full field reference and interpretation.
+- `bacondecomp` for forbidden-comparison weight
+- `TwoWayFEWeights` for negative-weight share
 
-**Severity Thresholds** (both diagnostics use the same bands):
+Expected output:
 
-| Metric                      | >50%   | 25-50%   | 10-25% | <10%    |
-|-----------------------------|--------|----------|--------|---------|
-| Forbidden weight %          | SEVERE | MODERATE | MILD   | MINIMAL |
-| Neg. weight share (abs. wt) | SEVERE | MODERATE | MILD   | MINIMAL |
-
-- SEVERE: Abandon TWFE entirely; use robust estimators
-- MODERATE: TWFE likely problematic; strongly prefer robust estimators
-- MILD: Use TWFE with caution; run robust estimators as robustness check
-- MINIMAL: TWFE may be acceptable; robust estimators still recommended
+- A severity label: `SEVERE`, `MODERATE`, `MILD`, or `MINIMAL`
+- A recommendation on whether TWFE should be abandoned, treated only as a comparison, or used cautiously
 
 ### Step 3: Choose and Run Robust Estimators
 
-See `references/did-step-3-estimation.md` for full details on all 5 core estimators.
+Load: `references/did-step-3-estimation.md`
 
-> **Iterative PT assessment**: Start with unconditional parallel trends. If
-> implausible, assess selection mechanisms, check covariate overlap, then
-> re-estimate with covariates. See "Iterative Parallel Trends Workflow" in
-> `references/did-step-3-estimation.md`.
+Use this step for staggered, binary, absorbing treatment after Step 1 confirms the core pipeline.
 
-**Estimator Selection Quick Reference:**
+Core estimator menu:
 
-| Package         | Function                | Approach             | Best For                              | Control Group     |
-|-----------------|-------------------------|----------------------|---------------------------------------|-------------------|
-| `did`           | `att_gt()` + `aggte()`  | Callaway-Sant'Anna   | General purpose; transparent          | Not-yet-treated   |
-| `fixest`        | `feols()` + `sunab()`   | Sun-Abraham          | Speed; large datasets; regression     | Never/last-treated|
-| `didimputation` | `did_imputation()`      | Borusyak-Jaravel-Spiess | Efficiency; imputation logic       | Not-yet-treated   |
-| `did2s`         | `did2s()`               | Gardner two-stage    | Speed; intuitive two-stage            | Not-yet-treated   |
-| `staggered`     | `staggered()`           | Roth-Sant'Anna       | Random timing; replication            | Not-yet-treated   |
+| Package | Function | Best Default Use |
+|---|---|---|
+| `did` | `att_gt()` + `aggte()` | General-purpose primary estimator |
+| `fixest` | `feols()` + `sunab()` | Fast event studies and plotting |
+| `did2s` | `did2s()` | Fast two-stage fallback or comparison |
+| `didimputation` | `did_imputation()` | Imputation logic and efficiency |
+| `staggered` | `staggered()` | Random-timing and replication-style checks |
 
-**Top 3 Estimator Code Templates:**
+Expected output:
 
-Callaway-Sant'Anna:
-```r
-library(did)
-cs_out <- att_gt(yname = "outcome", tname = "time", idname = "unit_id",
-                 gname = "first_treat", data = df,
-                 control_group = "notyettreated", est_method = "dr")
-cs_es <- aggte(cs_out, type = "dynamic")
-ggdid(cs_es)
-```
-
-Sun-Abraham:
-```r
-library(fixest)
-# sunab() drops rows where first_treat is NA; convert to Inf for never-treated
-df$first_treat[is.na(df$first_treat)] <- Inf
-sa_out <- feols(outcome ~ sunab(first_treat, time) | unit_id + time,
-                data = df, cluster = ~unit_id)
-iplot(sa_out)
-```
-
-Gardner (did2s):
-```r
-library(did2s)
-df$treat <- ifelse(!is.na(df$first_treat) & df$first_treat > 0 &
-                   df$time >= df$first_treat, 1, 0)
-gardner_out <- did2s(data = df, yname = "outcome",
-                     first_stage = ~ 0 | unit_id + time,
-                     second_stage = ~ i(treat, ref = FALSE),
-                     treatment = "treat", cluster_var = "unit_id")
-```
+- One primary estimator path
+- Zero or more comparison estimators for robustness
+- A concrete event-study object or ATT object that can feed later inference steps
 
 ### Step 4: Power Analysis for Pre-Trends
 
-See `references/did-step-4-power-analysis.md` for full details.
+Load: `references/did-step-4-power-analysis.md`
 
-```r
-library(pretrends)
-# Extract matched coefficients and VCOV from sunab model
-# NOTE: coef() and vcov() have mismatched dimensions for sunab models;
-# sunab_beta_vcv() returns properly aggregated, conformable objects.
-bv <- HonestDiD:::sunab_beta_vcv(sa_out)
-beta  <- bv$beta
-sigma <- bv$sigma
-tVec  <- as.numeric(gsub(".*::", "", names(coef(sa_out))))
+Use this step after a valid event-study path produces conformable `betahat`, `sigma`, and `tVec` objects.
 
-# What linear trend slope would we detect with 50% power?
-slope_50 <- slope_for_power(sigma = sigma, targetPower = 0.50,
-                            tVec = tVec, referencePeriod = -1)
+Purpose:
 
-# Full power analysis
-delta_hyp <- slope_50 * tVec
-pt_results <- pretrends(betahat = beta, sigma = sigma,
-                        deltatrue = delta_hyp, tVec = tVec)
-```
+- Quantify what kinds of pre-trend violations the data could actually detect
+- Avoid overinterpreting a non-significant pre-trends test when power is weak
 
-### Step 5: Sensitivity Analysis (HonestDiD) and Inference
+Default toolchain:
 
-See `references/did-step-5-sensitivity-inference.md` for full details including coefficient extraction.
+- `pretrends`
+- `fixest` or `did` event-study output
+- `HonestDiD:::sunab_beta_vcv` when using `sunab()` output
 
-```r
-library(HonestDiD)
-# beta and sigma from the pretrends block above (via sunab_beta_vcv)
-# sunab omits the base period (-1), so tVec already excludes it.
-pre_idx  <- which(tVec < -1)
-post_idx <- which(tVec >= 0)
+Expected output:
 
-# Subset betahat and sigma to pre + post (excluding base)
-keep <- c(pre_idx, post_idx)
-beta_sub  <- beta[keep]
-sigma_sub <- sigma[keep, keep]
+- Detectable trend at 50% or 80% power
+- Bias relative to `|ATT|` assessment: excellent, good, moderate, or poor power
 
-# Run sensitivity analysis
-honest_results <- createSensitivityResults_relativeMagnitudes(
-  betahat = beta_sub, sigma = sigma_sub,
-  numPrePeriods = length(pre_idx), numPostPeriods = length(post_idx),
-  Mbarvec = seq(0.5, 2, by = 0.5))
-```
+### Step 5: Sensitivity Analysis and Inference
 
-**Breakdown M Interpretation:**
+Load: `references/did-step-5-sensitivity-inference.md`
 
-| Breakdown M | Evidence Strength | Meaning |
-|-------------|-------------------|---------|
-| NULL (none) | Strong            | Effect robust to all tested M values |
-| < 1         | Weak              | Effect fragile; even smaller-than-pre violations invalidate |
-| 1 - 1.5     | Moderate          | Robust if post-violations similar to pre-violations |
-| > 1.5       | Fairly robust     | Post-violations must be substantially larger to invalidate |
+Use this step after Step 4 or whenever the user needs robust post-estimation inference rather than raw event-study coefficients alone.
 
-**Power Analysis Interpretation** (cumulative detectable bias / |ATT|):
+Purpose:
 
-| Bias / |ATT| | Power Quality | Meaning |
-|---------------|---------------|---------|
-| < 5%          | Excellent     | Can detect violations far smaller than the effect |
-| 5% - 25%      | Good          | Good power relative to effect size |
-| 25% - 100%    | Moderate      | Undetectable violations could rival the effect |
-| > 100%        | Poor          | Pre-test is uninformative; see Step 4 for assessment |
+- Convert estimator output into `betahat`, `sigma`, and `tVec`
+- Run `HonestDiD` sensitivity analysis
+- Integrate covariate-aware DiD inference through `DRDID` when appropriate
 
-**Inference Best Practices:**
-- Cluster SEs at the treatment-assignment level (e.g., state if policy is state-level, even if units are counties). See Step 3 "Clustering Standard Errors" section for per-estimator syntax.
-- When treated clusters < 30, cluster-robust SEs may be unreliable; supplement with wild cluster bootstrap or HonestDiD
-- When treated clusters < 10, consider aggregating to the treatment level before estimation
-- Report both point estimates and HonestDiD sensitivity intervals
+Expected output:
 
-## Personalized Method Selection Advice
+- HonestDiD intervals or breakdown-`M` interpretation
+- A final evidence assessment, not just a plot
+
+## High-Level Routing Rules
+
+- **Binary absorbing staggered treatment**: stay on the core workflow and default to `did`, `fixest`, `did2s`, `didimputation`, and `staggered`.
+- **Canonical 2x2 DiD**: standard DiD is acceptable; TWFE pathology diagnostics are usually not the bottleneck.
+- **Non-binary, continuous, or reversible treatment**: route to `references/did-advanced-methods.md` and prioritize `DIDmultiplegt` or `DIDmultiplegtDYN`.
+- **Block treatment with simultaneous adoption**: consider `synthdid` or `gsynth`.
+- **Extended regression framing**: `etwfe` is an option, but treat it as a caveated method rather than the default.
+- **Functional form testing**: `YatchewTest` is niche and should not drive the core workflow.
+- **Multilevel treatment structure**: if treatment varies at the state level but outcomes are measured at the county level, Step 1 must confirm how treatment timing is propagated and Step 3 must revisit clustering and interpretation.
+
+## Default Recommendations
+
+- If the user is unsure where to start, begin with Step 1 and `panelView`.
+- If the design is standard staggered binary absorbing, default to `did` as the main ATT estimator.
+- If the user needs a fast event study or clean plotting, pair `fixest::sunab()` with Step 4 and Step 5.
+- If cohorts are small or Sun-Abraham is unstable, compare against `did` or `did2s`.
+- If the user wants TWFE diagnostics, run both Bacon and negative-weight checks rather than only one.
+- If pre-trends look weakly powered, report that explicitly before drawing comfort from non-significant leads.
+- If treatment is reversible or non-binary, do not force it through the core staggered binary pipeline.
+
+## Method Selection Heuristics
 
 ### By Treatment Pattern
-- **Canonical (2x2 DiD)**: Standard TWFE is appropriate; focus on parallel trends and DRDID with covariates
-- **Staggered adoption**: MANDATORY diagnostics (Step 2); robust estimators required; high-priority sensitivity analysis
-- **Complex (non-binary/reversible)**: Use DIDmultiplegt family; standard methods may not apply
+
+- **Canonical 2x2 DiD**: standard DiD is usually acceptable; focus on design credibility, covariates, and inference.
+- **Staggered adoption**: Step 2 diagnostics are mandatory and robust estimators should drive the final answer.
+- **Complex non-binary or reversible treatment**: route to the DCDH family; do not present the core staggered binary estimators as defaults.
 
 ### By Sample Size
-- **Small (<100 units)**: Power analysis especially important; consider aggregating time periods; sensitivity analysis critical
-- **Medium / Large**: Standard workflow; for >10K units prefer SA (fixest) for speed
+
+- **Small panels**: power analysis and sensitivity analysis become more important because pre-trends tests can be weak.
+- **Medium panels**: follow the standard workflow and compare at least two estimators when feasible.
+- **Large panels**: `fixest` / Sun-Abraham is often the fastest event-study path, but speed does not replace diagnostics.
 
 ### By Priority
-- **Speed**: SA (fixest::sunab) primary, Gardner (did2s) secondary
-- **Transparency / Robustness**: CS (did) primary; compare multiple estimators; extensive sensitivity analysis
 
-### Key Warnings at Each Step
-1. **Assessment**: Don't assume TWFE is valid without checking treatment pattern
-2. **Diagnostics**: Don't skip even if you plan to use robust estimators; >25% forbidden weight = serious bias risk
-3. **Estimation**: Different estimators make different assumptions; large discrepancies between methods indicate model uncertainty; compare at least two
-4. **Power**: Non-significant pre-trends does NOT mean parallel trends holds; low power makes pre-test uninformative
-5. **Sensitivity**: Don't skip -- crucial for credibility; low breakdown M = fragile results
+- **Speed**: start with `fixest::sunab()`, then compare against `did2s` or `did`.
+- **Transparency and robustness**: start with `did`, then compare against `fixest`, `did2s`, or `staggered`.
+- **Inference credibility**: prioritize event-study outputs that can feed cleanly into Step 4 and Step 5.
 
-## Cross-Package Coefficient Extraction Cookbook
+## Key Warnings at Each Step
 
-Different estimators store results differently. Use these patterns to extract `betahat`, `sigma`, and `tVec` for HonestDiD/pretrends.
+1. **Assessment**: Never assume TWFE is valid until Step 1 confirms the treatment structure.
+2. **Diagnostics**: Do not skip Step 2 in staggered adoption settings; large forbidden or negative weights are a substantive warning, not a cosmetic footnote.
+3. **Estimation**: Different estimators target similar but not identical objects; large disagreements should be reported as model uncertainty.
+4. **Power**: Non-significant pre-trends do not prove parallel trends; low power can make the pre-test uninformative.
+5. **Sensitivity**: Do not stop at event-study plots when the design is controversial; Step 5 is part of the credibility argument.
 
-**Time Period Parsing** (works across estimators):
-```r
-extract_time_periods <- function(coef_names) {
-  patterns <- c(
-    ".*::([+-]?[0-9]+)$",               # fixest sunab: "year::3" -> 3
-    "^([+-]?[0-9]+)$",                  # did: "-2" -> -2
-    ".*[Tt]ime[^0-9+-]*([+-]?[0-9]+)$"  # generic: "Time_to_treat-3" -> -3
-  )
-  for (pat in patterns) {
-    m <- regmatches(coef_names, regexec(pat, coef_names))
-    if (all(lengths(m) > 1)) {
-      tVec <- as.numeric(vapply(m, `[[`, character(1), 2))
-      if (!any(is.na(tVec))) return(tVec)
-    }
-  }
-  return(NULL)  # No pattern matched -- handle in calling code
-}
-```
+## Common Data Coding Gotchas
 
-**From fixest (Sun-Abraham):**
-```r
-# coef() and vcov() have mismatched dimensions for sunab models.
-# Use sunab_beta_vcv() to get properly aggregated, conformable objects.
-bv      <- HonestDiD:::sunab_beta_vcv(sa_model)
-betahat <- bv$beta
-sigma   <- bv$sigma
-tVec    <- extract_time_periods(names(coef(sa_model)))
-```
+| Estimator family | Never-treated coding | Main gotcha |
+|---|---|---|
+| `did` | `0` | `gname` cannot stay `NA` |
+| `fixest::sunab()` | `Inf` | `NA` cohorts are silently dropped |
+| `didimputation` | large future value such as `max(t) + 10` | Balanced-panel assumptions matter |
+| `staggered` | `Inf` | Event-time setup must align with not-yet-treated logic |
+| `DIDmultiplegt` / `DIDmultiplegtDYN` | explicit treatment variable | Build the treatment variable from timing only if treatment is actually binary |
 
-**From did (Callaway-Sant'Anna):**
-```r
-es <- aggte(cs_out, type = "dynamic")
-betahat <- es$att.egt
-names(betahat) <- es$egt
-sigma <- diag(es$se^2)  # diagonal covariance from SEs
-tVec  <- as.numeric(es$egt)
-```
+When in doubt, open the relevant step guide first and the package quick start second.
 
-**From didimputation (BJS):**
-```r
-# did_imputation() returns a data.table, not a fixest object.
-# Extract coefficients and SEs from the table columns directly.
-betahat <- bjs_model$estimate
-names(betahat) <- bjs_model$term
-sigma   <- diag(bjs_model$std.error^2)
-tVec    <- extract_time_periods(bjs_model$term)
-```
+## Reference Map
 
-## Data Preparation Gotchas Per Estimator
+### Workflow files
 
-Each estimator has specific requirements for the `gname` (first treatment period) variable:
+| File | Use |
+|---|---|
+| `references/did-master-guide.md` | Condensed practitioner guide across the full 5-step workflow |
+| `references/did-step-1-treatment-structure.md` | Design profiling and routing |
+| `references/did-step-2-diagnostics.md` | TWFE diagnostics |
+| `references/did-step-3-estimation.md` | Core robust estimators |
+| `references/did-step-4-power-analysis.md` | `pretrends` power analysis |
+| `references/did-step-5-sensitivity-inference.md` | HonestDiD, DRDID, coefficient extraction |
+| `references/did-advanced-methods.md` | Non-standard treatment structures and alternative methods |
+| `references/did-troubleshooting.md` | Install failures, runtime errors, numerical issues |
 
-| Estimator   | Never-Treated Coding | Special Requirements |
-|-------------|---------------------|----------------------|
-| CS (`did`)  | `gname = 0`         | Must not be NA for never-treated |
-| SA (`fixest`) | `gname = Inf`      | NA drops rows; convert NA → Inf |
-| BJS (`didimputation`) | `gname = max(time)+10` | Balanced panel required; data.table format |
-| Gardner (`did2s`) | Derive `treat` indicator | `treat = 1` when `time >= gname & gname > 0` |
-| Staggered   | `gname = Inf`       | Must not be 0 or NA for never-treated |
-| DCDH (`DIDmultiplegt`) | `gname = 0` | Binary 0/1 treatment indicator needed |
+### Package quick starts
 
-**Sampling/Population Weights Per Estimator:**
+Open these when you need compact package-specific guidance:
 
-| Estimator | Parameter | Syntax |
-|-----------|-----------|--------|
-| CS (`did`) | `weightsname` | `att_gt(..., weightsname = "W")` |
-| SA (`fixest`) | `weights` | `feols(..., weights = ~W)` |
-| BJS (`didimputation`) | `wname` | `did_imputation(..., wname = "W")` |
-| Gardner (`did2s`) | `weights` | `did2s(..., weights = "W")` |
-| Staggered | — | Not supported; use CS or Gardner |
+- `references/packages/did_quick_start.md`
+- `references/packages/fixest_quick_start.md`
+- `references/packages/did2s_quick_start.md`
+- `references/packages/didimputation_quick_start.md`
+- `references/packages/staggered_quick_start.md`
+- `references/packages/HonestDiD_quick_start.md`
+- `references/packages/pretrends_quick_start.md`
+- `references/packages/DIDmultiplegt_quick_start.md`
+- `references/packages/DIDmultiplegtDYN_quick_start.md`
 
-> **When to weight**: Omit for unit-level effects; include population weights for population-representative effects (e.g., mortality across states of varying size).
-
-**BJS Balanced Panel Preparation** (critical -- didimputation will fail without this):
-```r
-library(data.table)
-
-# 1. Create balanced grid
-unique_ids   <- sort(unique(df[[idname]]))
-unique_times <- sort(unique(df[[tname]]))
-balanced <- expand.grid(id = unique_ids, time = unique_times,
-                        stringsAsFactors = FALSE)
-names(balanced) <- c(idname, tname)
-
-# 2. Merge with original data
-merged <- merge(balanced, df, by = c(idname, tname), all.x = TRUE)
-
-# 3. Convert to data.table (required by didimputation)
-dt <- data.table::as.data.table(merged)
-
-# 4. Set never-treated gname to max(time) + 10 (not 0, NA, or Inf)
-max_t <- max(dt[[tname]], na.rm = TRUE)
-dt[[gname]][dt[[gname]] == 0 | is.na(dt[[gname]])] <- max_t + 10
-
-# 5. Coerce column types (all required)
-dt[[idname]] <- as.integer(dt[[idname]])
-dt[[tname]]  <- as.integer(dt[[tname]])
-dt[[gname]]  <- as.numeric(dt[[gname]])
-dt[[yname]]  <- as.numeric(dt[[yname]])
-```
-
-## Package Installation Reference
-
-```r
-# Core estimators (all on CRAN)
-install.packages(c("did", "fixest", "did2s", "staggered"))
-install.packages("didimputation")
-
-# Diagnostics (CRAN)
-install.packages(c("bacondecomp", "TwoWayFEWeights"))
-
-# Visualization & covariate balance (CRAN)
-install.packages(c("panelView", "cobalt"))
-
-# Sensitivity & power (CRAN + GitHub)
-install.packages(c("HonestDiD", "DRDID"))
-remotes::install_github("jonathandroth/pretrends")  # GitHub only
-
-# Advanced methods (CRAN + GitHub)
-install.packages(c("etwfe", "YatchewTest", "gsynth"))
-
-# DIDmultiplegtDYN requires polars (Rust-based, not on CRAN)
-# Step 1: Install Rust if needed (macOS: brew install rust)
-# Step 2: Install polars from r-universe
-install.packages("polars", repos = "https://community.r-multiverse.org")
-# Step 3: Install DIDmultiplegtDYN and DIDmultiplegt
-install.packages(c("DIDmultiplegtDYN", "DIDmultiplegt"))
-# IMPORTANT: Always load polars before DIDmultiplegtDYN (namespace bug in v2.3.0)
-# library(polars); library(DIDmultiplegtDYN)
-
-# Synthetic control methods (GitHub only)
-remotes::install_github("synth-inference/synthdid")
-```
-
-## Reference Files (`references/`)
-
-### Step Guides
-
-| File | Contents |
-|------|----------|
-| `references/did-master-guide.md` | Condensed practitioner's guide to the 5-step workflow |
-| `references/did-step-1-treatment-structure.md` | Treatment-structure assessment and routing |
-| `references/did-step-2-diagnostics.md` | TWFE diagnostics workflow |
-| `references/did-step-3-estimation.md` | Robust-estimator selection and execution |
-| `references/did-step-4-power-analysis.md` | Pre-trends power analysis |
-| `references/did-step-5-sensitivity-inference.md` | HonestDiD sensitivity and final inference |
-| `references/did-advanced-methods.md` | DIDmultiplegt/DYN, gsynth, synthdid, etwfe, YatchewTest |
-| `references/did-troubleshooting.md` | Runtime errors, installation failures, and fixes |
-| `references/package-versions.md` | Version tracking for all 17 packages |
-
-### Package Documentation (`references/packages/`)
-
-Each package has three files. Always read `*_quick_start.md` first, then open `*.md` only for the needed sections.
-
-- **`*_quick_start.md`**: Function map, workflow, GitHub source pointers
-- **`*.md`**: Full CRAN-level API documentation
-- **`*-additional.md`**: Supplementary notes from GitHub repos
-
-| Package | Quick Start | Full Docs | Additional |
-|---------|-------------|-----------|------------|
-| bacondecomp | `bacondecomp_quick_start.md` | `bacondecomp.md` | `bacondecomp-additional.md` |
-| TwoWayFEWeights | `TwoWayFEWeights_quick_start.md` | `TwoWayFEWeights.md` | `TwoWayFEWeights-additional.md` |
-| did | `did_quick_start.md` | `did.md` | `did-additional.md` |
-| fixest | `fixest_quick_start.md` | `fixest.md` | `fixest-additional.md` |
-| didimputation | `didimputation_quick_start.md` | `didimputation.md` | `didimputation-additional.md` |
-| did2s | `did2s_quick_start.md` | `did2s.md` | `did2s-additional.md` |
-| staggered | `staggered_quick_start.md` | `staggered.md` | `staggered-additional.md` |
-| HonestDiD | `HonestDiD_quick_start.md` | `HonestDiD.md` | `HonestDiD-additional.md` |
-| pretrends | `pretrends_quick_start.md` | `pretrends.md` | `pretrends-additional.md` |
-| DRDID | `DRDID_quick_start.md` | `DRDID.md` | `DRDID-additional.md` |
-| DIDmultiplegt | `DIDmultiplegt_quick_start.md` | `DIDmultiplegt.md` | `DIDmultiplegt-additional.md` |
-| DIDmultiplegtDYN | `DIDmultiplegtDYN_quick_start.md` | `DIDmultiplegtDYN.md` | `DIDmultiplegtDYN-additional.md` |
-| gsynth | `gsynth_quick_start.md` | `gsynth.md` | `gsynth-additional.md` |
-| synthdid | `synthdid_quick_start.md` | `synthdid.md` | `synthdid-additional.md` |
-| etwfe | `etwfe_quick_start.md` | `etwfe.md` | `etwfe-additional.md` |
-| panelView | `panelView_quick_start.md` | `panelView.md` | `panelView-additional.md` |
-| YatchewTest | `YatchewTest_quick_start.md` | `YatchewTest.md` | `YatchewTest-additional.md` |
-
-## Simulating Test Data for DiD Analysis
-
-When the user needs example data to test their code or learn the workflow:
-
-```r
-create_did_example_data <- function(n_units = 100, n_periods = 10,
-                                    treatment_period = 6, seed = 12345) {
-  set.seed(seed)
-  data <- expand.grid(unit_id = 1:n_units, time = 1:n_periods)
-
-  # Staggered treatment: 30% never-treated, 4 treated cohorts
-  n_never <- floor(n_units * 0.3)
-  remaining <- n_units - n_never
-  cohort_times <- treatment_period + c(-2, 0, 2, 3)
-  cohort_sizes <- as.integer(c(0.2, 0.3, 0.3, 0.2) * remaining)
-  cohort_sizes[length(cohort_sizes)] <- remaining - sum(cohort_sizes[-length(cohort_sizes)])
-  first_treat <- c(rep(NA, n_never),
-                   unlist(mapply(rep, cohort_times, cohort_sizes)))
-  data$first_treat <- first_treat[data$unit_id]
-  data$treated <- ifelse(is.na(data$first_treat), 0,
-                         ifelse(data$time >= data$first_treat, 1, 0))
-
-  # Outcome with true ATT = 2.0
-  unit_fe <- rnorm(n_units, mean = 10, sd = 2)
-  time_fe <- rnorm(n_periods, mean = 0, sd = 0.5)
-  data$outcome <- unit_fe[data$unit_id] + time_fe[data$time] +
-                  2.0 * data$treated + rnorm(nrow(data), sd = 1)
-  data
-}
-```
+The step guides are the workflow contracts. This file should stay a thin router.

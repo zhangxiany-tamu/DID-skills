@@ -448,6 +448,8 @@ sigma_reg <- sigma_sub + diag(1e-6, nrow(sigma_sub))
 
 **Interpretation**: When the warning appears, the reported CI length is a **lower bound** — the true robust CI may be wider. Focus on `Mbar` values that produce finite endpoints. If all entries have open endpoints, the data may not support meaningful sensitivity bounds; report this limitation explicitly.
 
+**Local validation note (2026-04-09)**: This warning was reproduced on the `fixest::base_stagg` workflow with `HonestDiD` 0.2.6. The function still returned finite results for the tested `Mbar` values, but no package-version-specific fix was confirmed in this pass.
+
 ---
 
 ## 6. staggered
@@ -680,3 +682,89 @@ install.packages("pkgname", type = "source", INSTALL_opts = "--no-multiarch")
 | cmake | some compiled packages | `brew install cmake` |
 
 **Tip**: If the error mentions a missing `-l<library>` flag (e.g., `-lgsl`), search Homebrew: `brew search gsl` then `brew install gsl`.
+
+### 10.6 macOS Homebrew R: Xcode Command Line Tools / SDK not found
+
+**Symptom**: Package compilation fails with errors such as:
+
+```
+xcrun: error: invalid active developer path
+clang++: error: SDK "macosx" cannot be located
+fatal error: 'cmath' file not found
+```
+
+**Cause**: The Xcode Command Line Tools are missing, broken, or out of sync after a macOS update. Homebrew R can find `clang++`, but the compiler cannot find the macOS SDK headers.
+
+**Fix**:
+
+```bash
+# Install or repair the command line tools
+xcode-select --install
+
+# If tools are already installed but broken, point xcode-select at them
+sudo xcode-select --switch /Library/Developer/CommandLineTools
+```
+
+Then verify:
+
+```bash
+xcrun --show-sdk-path
+clang++ --version
+```
+
+If `xcrun --show-sdk-path` fails, fix this before retrying any R package install.
+
+### 10.7 Homebrew tools installed in shell but not visible inside R
+
+**Symptom**: `cargo`, `pkg-config`, `clang++`, or `gfortran` work in Terminal, but R still says they are missing during `install.packages()`.
+
+**Cause**: R may be launched from an environment with a shorter `PATH` than your interactive shell. This is common when RStudio or another GUI app does not inherit your shell startup files.
+
+**Diagnosis**:
+
+```r
+Sys.which(c("cargo", "pkg-config", "clang++", "gfortran"))
+Sys.getenv("PATH")
+```
+
+If these return empty strings even though the tools work in Terminal, R cannot see your Homebrew binaries.
+
+**Fix**: Add Homebrew tool locations to `~/.Renviron` so R sees them consistently:
+
+```sh
+PATH=/opt/homebrew/bin:/opt/homebrew/opt/llvm/bin:${PATH}
+```
+
+Then restart R and verify with `Sys.which(...)` again before retrying `polars`, `DIDmultiplegtDYN`, or other compiled packages.
+
+### 10.8 DCDH packages fail to load because `rgl` wants OpenGL
+
+**Symptom**: `library(DIDmultiplegt)` or `library(DIDmultiplegtDYN)` fails during load with messages such as:
+
+```r
+package or namespace load failed for 'DIDmultiplegtDYN':
+ .onLoad failed in loadNamespace() for 'rgl', details:
+  call: rgl.init(initValue, onlyNULL)
+  error: OpenGL is not available in this build
+```
+
+or:
+
+```r
+Library not loaded: /opt/X11/lib/libGLU.1.dylib
+```
+
+**Cause**: The package imports `rgl`, and in headless or partially configured macOS environments `rgl` tries to initialize an OpenGL device during load. If no display/OpenGL stack is available, the package can fail before you ever reach the DiD function itself.
+
+**Fast workaround**: Force `rgl` to use a NULL device before loading the package:
+
+```r
+options(rgl.useNULL = TRUE)
+library(DIDmultiplegt)
+# or
+library(DIDmultiplegtDYN)
+```
+
+This was sufficient in the 2026-04-09 local validation pass.
+
+**If you actually need interactive 3D support**: install the missing X11/OpenGL stack, typically via XQuartz on macOS. But for DiD estimation workflows, the NULL-device workaround is usually enough.

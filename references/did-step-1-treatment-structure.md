@@ -12,12 +12,13 @@
 - [Cohort Size Summary Table](#cohort-size-summary-table)
 - [Treatment Rollout Visualization](#treatment-rollout-visualization)
 - [Complete Step 1 Workflow Example](#complete-step-1-workflow-example)
+- [Simulating Example Data](#simulating-example-data)
 - [Decision Routing Summary](#decision-routing-summary)
 - [Multi-Level Treatment Structure](#multi-level-treatment-structure)
 - [Packages Used Next](#packages-used-next)
 - [Read Next](#read-next)
 
-Use this step before diagnostics/estimation to classify the treatment design and route to the correct DiD workflow.
+Use this step before diagnostics/estimation to classify the treatment design and route to the correct DiD workflow. Treat this file as the authoritative Step 1 workflow contract; `SKILL.md` should only route here.
 
 ## Goal
 
@@ -607,6 +608,41 @@ if (profile$route == "STAGGERED") {
   # -> did-advanced-methods.md
 }
 ```
+
+---
+
+## Simulating Example Data
+
+When the user does not yet have a panel dataset, use this helper to generate a simple staggered-adoption example for learning, testing code, or checking routing logic.
+
+```r
+create_did_example_data <- function(n_units = 100, n_periods = 10,
+                                    treatment_period = 6, seed = 12345) {
+  set.seed(seed)
+  data <- expand.grid(unit_id = 1:n_units, time = 1:n_periods)
+
+  # Staggered treatment: 30% never-treated, 4 treated cohorts
+  n_never <- floor(n_units * 0.3)
+  remaining <- n_units - n_never
+  cohort_times <- treatment_period + c(-2, 0, 2, 3)
+  cohort_sizes <- as.integer(c(0.2, 0.3, 0.3, 0.2) * remaining)
+  cohort_sizes[length(cohort_sizes)] <- remaining - sum(cohort_sizes[-length(cohort_sizes)])
+  first_treat <- c(rep(NA, n_never),
+                   unlist(mapply(rep, cohort_times, cohort_sizes)))
+  data$first_treat <- first_treat[data$unit_id]
+  data$treated <- ifelse(is.na(data$first_treat), 0,
+                         ifelse(data$time >= data$first_treat, 1, 0))
+
+  # Outcome with true ATT = 2.0
+  unit_fe <- rnorm(n_units, mean = 10, sd = 2)
+  time_fe <- rnorm(n_periods, mean = 0, sd = 0.5)
+  data$outcome <- unit_fe[data$unit_id] + time_fe[data$time] +
+                  2.0 * data$treated + rnorm(nrow(data), sd = 1)
+  data
+}
+```
+
+This example is for workflow testing and teaching, not for substantive validation of a research design.
 
 ---
 

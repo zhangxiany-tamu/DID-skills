@@ -23,7 +23,7 @@
   - [Covariate Syntax Across Estimators](#covariate-syntax-across-estimators)
   - [Step E: Formal Conditional Pre-Test](#step-e-formal-conditional-pre-test)
 
-This file covers the five core heterogeneity-robust estimators for staggered DiD with binary, absorbing treatment. For non-binary, reversible, or continuous treatments, see `did-advanced-methods.md`.
+This file covers the five core heterogeneity-robust estimators for staggered DiD with binary, absorbing treatment. Treat this file as the authoritative Step 3 workflow contract; `SKILL.md` should only route here. For non-binary, reversible, or continuous treatments, see `did-advanced-methods.md`.
 
 ## Estimator Comparison Table
 

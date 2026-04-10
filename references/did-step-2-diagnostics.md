@@ -9,7 +9,7 @@
 - [When Diagnostics Are Not Needed](#when-diagnostics-are-not-needed)
 - [Scalability: Large Panels (>1,000 Units)](#scalability-large-panels-1000-units)
 
-Two complementary diagnostic tools for detecting problems with TWFE regression under staggered treatment adoption.
+Two complementary diagnostic tools for detecting problems with TWFE regression under staggered treatment adoption. Treat this file as the authoritative Step 2 workflow contract; `SKILL.md` should only route here.
 
 ## bacondecomp: Goodman-Bacon Decomposition
 
