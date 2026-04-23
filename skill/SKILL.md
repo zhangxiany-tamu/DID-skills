@@ -7,7 +7,7 @@ description: >
   pre-trend power analysis, and HonestDiD sensitivity analysis.
 metadata:
   author: Xianyang Zhang
-  version: 1.1.0
+  version: 2.0.0
   category: statistics
   tags: [causal-inference, difference-in-differences, econometrics, R]
 ---

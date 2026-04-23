@@ -1,90 +1,46 @@
-# DID Analysis Agent Skill
+# DID
 
-A general agent skill that guides practitioners through modern Difference-in-Differences (DiD) causal inference analysis in R.
+Monorepo for Difference-in-Differences causal inference tooling:
 
-Covers an expanded modern DiD workflow: treatment structure assessment, TWFE diagnostics, heterogeneity-robust estimation, power analysis for pre-trends, HonestDiD sensitivity analysis, and practical extensions developed in this skill.
+- **`skill/`** — the `did-analysis` Claude Code skill (pure markdown). A 5-step workflow covering treatment structure assessment, TWFE diagnostics, heterogeneity-robust estimation, power analysis, and HonestDiD sensitivity — with per-package reference docs for 17 R packages.
+- **`mcp/`** — the companion `did-mcp` server (TypeScript + persistent R subprocess). Executes the skill's workflow end-to-end via ~9 workflow-shaped tools. *v1 in progress.*
 
-## Packages Covered
+The two halves are designed to work independently or together:
+- **Skill only**: install the skill, Claude reads it, writes R code for you to run.
+- **Skill + MCP**: install both, Claude calls tools to execute the workflow and returns interpreted results.
 
-bacondecomp, did, did2s, didimputation, DIDmultiplegt, DIDmultiplegtDYN, DRDID, etwfe, fixest, gsynth, HonestDiD, panelView, pretrends, staggered, synthdid, TwoWayFEWeights, YatchewTest
+## Install
 
-## Installation
-
-Clone or subtree this repo into the skills directory used by your agent.
-
-### Personal skill
-
-- Codex: `~/.codex/skills/did-analysis`
-- Claude Code: `~/.claude/skills/did-analysis`
-
-### Project skill
-
-- Codex: `.codex/skills/did-analysis`
-- Claude Code: `.claude/skills/did-analysis`
-
-### Git subtree
-
-Use the matching project prefix for your agent:
+Clone and run `install.sh`:
 
 ```bash
-# First-time install
-git subtree add --prefix=<skills-dir>/did-analysis \
-  https://github.com/zhangxiany-tamu/DID-skills.git main --squash
-
-# Later updates
-git subtree pull --prefix=<skills-dir>/did-analysis \
-  https://github.com/zhangxiany-tamu/DID-skills.git main --squash
+git clone https://github.com/zhangxiany-tamu/DID.git
+cd DID
+./install.sh
 ```
 
-Replace `<skills-dir>` with `.codex/skills` or `.claude/skills`.
+The script symlinks `skill/` into `~/.claude/skills/did-analysis/` and optionally builds the MCP server.
 
-## Usage
+Manual install (skill only):
 
-Once installed, the skill activates automatically when you discuss DiD topics. In clients that support explicit skill invocation, use `did-analysis` (for example `/did-analysis` in Claude Code).
-
-```
-/did-analysis
+```bash
+ln -s "$(pwd)/skill" ~/.claude/skills/did-analysis
 ```
 
-Example prompts that trigger the skill:
-- "I have panel data with staggered treatment adoption. Help me estimate the ATT."
-- "Run a Bacon decomposition to check for negative weights."
-- "Set up a HonestDiD sensitivity analysis for my event study."
+## How the skill and MCP interact
 
-## Maintainer Docs
+The skill does not call the MCP directly — Claude does. When `did-mcp` is configured as an MCP server, tools named `did_*` appear in Claude's tool list. The skill's `SKILL.md` and step guides tell Claude to prefer those tools when available, and to fall back to code generation when not.
 
-The skill remains installable from repo root. Maintainer docs now live alongside it:
+See `skill/SKILL.md` for the full routing logic.
 
-- `AGENTS.md` — repo-level instructions for Codex-compatible agents
-- `NEXT_STEPS.md` — shortest maintainer handoff
-- `BACKLOG.md` — active priorities and maintenance rules
-- `METHOD_MATRIX.md` — method/package priority tiers
-- `FAILURE_BUCKETS.md` — failure taxonomy for triage
-- `VALIDATION_RUNBOOK.md` — lean workflow validation prompts
+## Migration from flat-layout `DID-skills`
 
-## Structure
+This repo was previously `github.com/zhangxiany-tamu/DID-skills` with all skill files at the repo root. The skill has moved to `skill/`. See `MIGRATION.md` for upgrade instructions.
 
-```
-SKILL.md                          # Runtime router: trigger conditions + workflow routing
-AGENTS.md                         # Repo-level instructions for Codex-compatible agents
-NEXT_STEPS.md                     # Short maintainer handoff
-BACKLOG.md                        # Current priorities and validation queue
-METHOD_MATRIX.md                  # Package/workflow tiers
-FAILURE_BUCKETS.md                # Failure taxonomy
-VALIDATION_RUNBOOK.md             # Manual validation prompts
-references/
-├── did-step-{1-5}-*.md           # Step-level guides
-├── did-advanced-methods.md       # Non-standard treatment patterns
-├── did-troubleshooting.md        # Common errors and fixes
-└── packages/                     # Per-package docs (17 packages x 3 files)
-    ├── *_quick_start.md          # Package overview and function map
-    ├── *.md                      # Full API documentation
-    └── *-additional.md           # Supplementary notes
-```
+## Contributing
 
-## Maintenance Philosophy
-
-This repo is intentionally a passive skill repository, not an executable product. The goal is to keep a small set of real DiD workflows highly trustworthy, update docs from real validation failures, and avoid over-engineering the maintenance layer.
+- Skill maintenance: see `skill/CLAUDE.md`, `skill/NEXT_STEPS.md`, `skill/BACKLOG.md`.
+- MCP maintenance: see `mcp/README.md` (coming with v1 scaffold).
 
 ## License
 
