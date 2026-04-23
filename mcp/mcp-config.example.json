@@ -1,0 +1,13 @@
+{
+  "_comment": "Example Claude Code MCP server entry for did-mcp. Copy the 'did-mcp' block into the 'mcpServers' object of your ~/.claude/settings.json (or .claude/settings.json inside a project). Replace the absolute paths to point at YOUR checkout of this repo and YOUR Node/Rscript binaries. Run `which node` and `which Rscript` to find them.",
+  "mcpServers": {
+    "did-mcp": {
+      "command": "/Users/YOU/.nvm/versions/node/v22.18.0/bin/node",
+      "args": ["/Users/YOU/path/to/DID/mcp/dist/index.js"],
+      "env": {
+        "R_PATH": "/opt/homebrew/bin/Rscript",
+        "PATH": "/opt/homebrew/bin:/usr/local/bin:/Users/YOU/.nvm/versions/node/v22.18.0/bin:/usr/bin:/bin"
+      }
+    }
+  }
+}

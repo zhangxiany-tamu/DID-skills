@@ -1,0 +1,30 @@
+{
+  "name": "did-mcp",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "MCP server exposing the DID analysis workflow as agent-callable tools",
+  "main": "dist/index.js",
+  "bin": {
+    "did-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "smoke": "node scripts/smoke-test.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "engines": {
+    "node": "22.x"
+  }
+}
