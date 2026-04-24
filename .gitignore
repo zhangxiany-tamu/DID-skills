@@ -4,6 +4,16 @@
 # Local maintainer notes
 CLAUDE.md
 
+# Academic paper and its figures (tracked in a separate repo)
+paper.md
+figures/
+
+# Local Claude Code configuration (user-specific permissions, scheduled tasks)
+.claude/
+
+# AI tooling scratch/plan artifacts
+.plans/
+
 # OS files
 .DS_Store
 Thumbs.db
@@ -11,6 +21,12 @@ Desktop.ini
 *~
 .Spotlight-V100
 .Trashes
+Icon?
+
+# Google Drive sync artifacts (files like `main (1)`, `foo (2).md`)
+* (1)
+* (2)
+* (3)
 
 # Editor / IDE
 .vscode/
@@ -28,7 +44,11 @@ mcp/coverage/
 
 # === MCP runtime artifacts ===
 mcp/tmp/
+mcp/validation-output/
 /tmp/did-mcp/
+
+# === Skill runtime artifacts ===
+skill/validation-output/
 
 # === R build artifacts (monorepo-wide) ===
 *.Rproj.user
@@ -38,10 +58,3 @@ mcp/tmp/
 *.Rcheck/
 *.tar.gz
 *.rda
-*.rds
-*.rdb
-*.rdx
-*.o
-*.so
-*.dll
-*.dylib

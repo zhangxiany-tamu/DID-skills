@@ -50,11 +50,17 @@ export const SERIALIZABLE_R_CLASSES: ReadonlySet<string> = new Set([
   "AGGTEobj",        // did::aggte() return
   "fixest",          // fixest::feols() return
   "fixest_multi",    // fixest multi-lhs/rhs return
-  "did_imputation",  // didimputation return
-  "staggered",       // staggered package return
-  "drdid",           // DRDID return
-  "honest_did",      // HonestDiD return
-  "pretrends",       // pretrends return
+  "did_imputation",         // didimputation return (legacy)
+  "did_imputation_result",  // tagged didimputation return (v2 wrapper)
+  "staggered",              // staggered package return
+  "staggered_combined",     // wrapped staggered return (simple + eventstudy)
+  "drdid",              // DRDID return
+  "honest_did",         // HonestDiD return (legacy)
+  "honest_did_result",       // Phase-4 tagged sensitivity result
+  "pretrends",               // pretrends return
+  "power_result",            // Phase-4 tagged power analysis result
+  "twfe_diagnostic_result",  // Phase-5 tagged TWFE diagnostic result
+  "report",                  // Phase-6 tagged narrative report
 ]);
 
 export function getPersistenceClass(rClass: string): PersistenceClass {
@@ -91,6 +97,7 @@ export type RpcMethod =
   | "persist"
   | "restore"
   | "list_objects"
+  | "drop_object"
   // reserved for v1 tools
   | "load_panel"
   | "check_panel"
@@ -99,7 +106,13 @@ export type RpcMethod =
   | "recode_never_treated"
   | "estimate"
   | "compare_estimators"
-  | "extract_event_study";
+  | "extract_event_study"
+  | "honest_sensitivity"
+  | "power_analysis"
+  | "diagnose_twfe"
+  | "plot"
+  | "drdid"
+  | "report";
 
 export type RpcRequest = {
   readonly id: number;

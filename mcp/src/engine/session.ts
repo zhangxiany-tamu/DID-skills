@@ -13,6 +13,7 @@ import {
   createSessionState,
   getPersistenceClass,
   createStore,
+  nextHandleId,
   type Store,
 } from "../types.js";
 
@@ -20,6 +21,21 @@ export type SessionStore = Store<SessionState>;
 
 export function createSessionStore(sessionId: string): SessionStore {
   return createStore(createSessionState(sessionId));
+}
+
+/**
+ * Mint the next handle id for a given type and atomically commit the counter
+ * bump. Tools call this before dispatching to R so the id travels as part of
+ * the RPC params; R echoes it back in `objectsCreated[].id`.
+ */
+export function reserveHandleId(
+  store: SessionStore,
+  type: HandleType,
+): string {
+  const state = store.getState();
+  const { id, nextId } = nextHandleId(state, type);
+  store.setState((prev) => ({ ...prev, nextId }));
+  return id;
 }
 
 export function registerHandle(

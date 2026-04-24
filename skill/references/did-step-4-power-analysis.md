@@ -10,6 +10,19 @@
 
 This step focuses on statistical power for pre-trend testing. Treat this file as the authoritative Step 4 workflow contract; `SKILL.md` should only route here. For coefficient extraction patterns and period validation helpers, see `did-step-5-sensitivity-inference.md`.
 
+## Tool-Aware Path
+
+When `did-mcp` is registered, call `did_power_analysis` on an `event_study` handle (produced by `did_extract_event_study`) instead of running `pretrends::slope_for_power` manually.
+
+- **Tool**: `did_power_analysis`
+- **Inputs**: `event_study_id` (required), `target_powers` (default `[0.5, 0.8]`), `reference_period` (default `-1`), optional `deltatrue` (hypothesized linear trend vector) — if supplied, the tool also runs `pretrends::pretrends()` and returns the `df_power` table.
+- **Output**: `power_result_N` handle + `detectable_slopes` array with one entry per target power, plus the optional `pretrends` payload.
+- **Diagonal-fallback warning**: if the input event study has `sigma_is_diagonal_fallback=true` (true for every estimator except SA), the tool emits a warning in the `warnings` array — off-diagonal covariance is being ignored and the reported slopes are therefore a conservative (upper-bound) estimate. Report that caveat to the user.
+
+**Common route**: `did_estimate` → `did_extract_event_study` → `did_power_analysis`. Plumb the `event_study_1` handle in, not a raw estimate.
+
+The `pretrends` recipes and diagnostics below are the **code-gen fallback** when the MCP is not registered.
+
 ## pretrends: Power Analysis for Pre-Trend Tests
 
 ### Installation

@@ -12,6 +12,10 @@
     "dev": "tsc --watch",
     "start": "node dist/index.js",
     "smoke": "node scripts/smoke-test.mjs",
+    "smoke:estimators": "node scripts/smoke-estimators.mjs",
+    "smoke:edge": "node scripts/smoke-edgecases.mjs",
+    "smoke:all": "npm run smoke && npm run smoke:estimators && npm run smoke:edge",
+    "validate:real": "node scripts/validate-real-examples.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },

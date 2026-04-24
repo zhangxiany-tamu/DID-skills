@@ -25,6 +25,22 @@
 
 This file covers the five core heterogeneity-robust estimators for staggered DiD with binary, absorbing treatment. Treat this file as the authoritative Step 3 workflow contract; `SKILL.md` should only route here. For non-binary, reversible, or continuous treatments, see `did-advanced-methods.md`.
 
+## Tool-Aware Path
+
+When `did-mcp` is registered, run estimators via the three Step 3 tools instead of writing the per-package R by hand. Each tool handles the never-treated coding conversion automatically and returns a standardized `{overall, event_study, metadata, handle}` envelope so all five estimators produce the same response shape.
+
+| Goal | Tool | Notes |
+|---|---|---|
+| Run one of five estimators | `did_estimate` with `estimator` ∈ {`cs`, `sa`, `bjs`, `did2s`, `staggered`} | `cs` → CS (`did::att_gt` + `aggte`), `sa` → SA (`fixest::feols` + `sunab`), `bjs` → BJS (`didimputation::did_imputation`, requires balanced panel), `did2s` → Gardner (`did2s::did2s`), `staggered` → Roth-Sant'Anna (`staggered::staggered`). |
+| Run several and compare | `did_compare_estimators` with an `estimators` array | Returns per-estimator envelopes + a wide comparison table keyed on `event_time`. |
+| Pull a canonical event study | `did_extract_event_study` on any `estimate_N` handle | Returns `{betahat, sigma, tVec, sigma_is_diagonal_fallback, fallback_reason}`. Only SA produces a matched event-time VCOV (via `HonestDiD:::sunab_beta_vcv`); every other estimator sets `sigma_is_diagonal_fallback=true` with `reason="se_only"` or `reason="did2s"`. Always check that flag before downstream inference. |
+
+**Covariates**: pass `xformla_vars: string[]` (e.g. `["lpop", "educ"]`); each wrapper converts to the right native syntax. **Clustering**: pass `cluster_var`; defaults to the panel's id_var. **Event window**: `min_e` / `max_e` restrict both the event-study output and any internal aggregation.
+
+**Covariate-aware single-period DiD**: when the design reduces to a two-period pre/post slice and you want doubly-robust inference with explicit covariates, use `did_drdid` (wraps `DRDID::drdid`) — see Step 5.
+
+The R recipes in the rest of this guide remain the authoritative reference and are the **code-gen fallback** when the MCP is not registered.
+
 ## Estimator Comparison Table
 
 | Package | Function | Approach | Speed | Control Group | Data Requirement |

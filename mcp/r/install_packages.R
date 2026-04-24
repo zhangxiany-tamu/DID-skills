@@ -4,7 +4,7 @@
 # did-mcp — R Package Installer
 # ============================================================================
 # Installs the R packages used by the DID analysis workflow.
-# Package set is derived from ../skill/METHOD_MATRIX.md:
+# Package set is derived from ../../skill/METHOD_MATRIX.md:
 #   - P0 (first-class): install eagerly; workflows depend on these
 #   - P1 (caveated):    install on best-effort; workflows use them when present
 #   - GitHub-only:      installed via remotes if CRAN not available
@@ -28,8 +28,12 @@ check_and_install <- function(pkg, tier = "P0", description = "") {
   cat(sprintf("[INST]  %-22s  %s (%s) — %s\n",
               pkg, "installing...", tier, description))
   ok <- tryCatch({
+    # Install only structurally required deps (Depends / Imports / LinkingTo).
+    # `dependencies = TRUE` also pulls in Suggests, which for tidyverse-family
+    # packages roughly doubles install time and disk (svglite, ragg, testthat,
+    # …) while none of them are needed to run the DiD workflow.
     install.packages(pkg, repos = CRAN_REPO, quiet = TRUE,
-                     dependencies = TRUE)
+                     dependencies = c("Depends", "Imports", "LinkingTo"))
     requireNamespace(pkg, quietly = TRUE)
   }, error = function(e) {
     cat(sprintf("[FAIL]  %-22s  %s\n", pkg, conditionMessage(e)))
@@ -139,7 +143,7 @@ if (all(p0_status)) {
   cat(sprintf("\n[WARN] %d P0 package(s) failed to install: %s\n",
               length(missing), paste(missing, collapse = ", ")))
   cat("      did-mcp tools that depend on these will error at call time.\n")
-  cat("      See skill/references/did-troubleshooting.md for install fixes.\n")
+  cat("      See ../../skill/references/did-troubleshooting.md for install fixes.\n")
 }
 
 if (!all(p1_status)) {

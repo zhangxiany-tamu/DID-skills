@@ -7,7 +7,7 @@ description: >
   pre-trend power analysis, and HonestDiD sensitivity analysis.
 metadata:
   author: Xianyang Zhang
-  version: 2.0.0
+  version: 1.1.0
   category: statistics
   tags: [causal-inference, difference-in-differences, econometrics, R]
 ---
@@ -15,6 +15,7 @@ metadata:
 ## Contents
 - [Progressive Disclosure](#progressive-disclosure)
 - [When To Use This Skill](#when-to-use-this-skill)
+- [Execution Mode: Tools vs. Code-gen](#execution-mode-tools-vs-code-gen)
 - [Start Here](#start-here)
 - [The 5-Step Workflow](#the-5-step-workflow)
   - [Step 1: Assess Treatment Structure](#step-1-assess-treatment-structure)
@@ -62,6 +63,65 @@ Do not rely on this skill alone for:
 - Generic R package development or system administration
 - Non-DiD causal designs that need a different workflow
 - Running code inside this repo; all code blocks here are reference templates
+
+## Execution Mode: Tools vs. Code-gen
+
+This skill has two execution paths. Pick once at the start of the session based on which tools are registered, and stay consistent.
+
+**Tool-aware path (preferred when `did_*` tools are in your tool list).** The companion `did-mcp` server (in the monorepo's `mcp/` directory) exposes the 5-step workflow as agent-callable tools. If you see `did_ping`, `did_load_panel`, `did_estimate`, etc. in your tool list, USE THEM instead of writing R code for the user to paste. The tools return structured JSON, maintain handles across calls (`panel_1`, `estimate_1`, `event_study_1`, …), and let you drive the whole workflow without the user needing an R console open.
+
+**Code-gen fallback (when tools are absent).** Emit R code blocks that the user runs locally. This is the historical path and every step guide still includes complete, runnable examples. Everything in `references/did-step-*-*.md` works exactly as documented.
+
+### Detection
+
+Before Step 1, check whether `did_ping` is available. If the tool call round-trips an R version and a bridge PID, you are in tool-aware mode. If the tool does not exist, fall through to code-gen. Mixing the two paths mid-session creates confusing references — pick one and stay there.
+
+### Workflow → tool map
+
+| Workflow step | Tool-aware path | Code-gen fallback |
+|---|---|---|
+| Load panel (csv or parquet) | `did_load_panel` → returns `panel_N` handle | `read.csv` / `arrow::read_parquet` |
+| Integrity checks | `did_check_panel` → structured report | Six `check_*` function bodies in step-1 guide |
+| Design profile | `did_profile_design` → returns `design_profile_N` handle | `profile_did_design()` in step-1 guide |
+| Never-treated recode | `did_recode_never_treated` → new `panel_M` | `recode_never_treated()` in step-1 guide |
+| Rollout plot | `did_plot_rollout` → `plot_N` handle (PNG path) | `panelView::panelview()` |
+| TWFE diagnostics (Step 2) | `did_diagnose_twfe` → `twfe_diagnostic_N` | `bacondecomp::bacon` + `TwoWayFEWeights::twowayfeweights` |
+| Estimate (Step 3) | `did_estimate` with estimator ∈ {cs, sa, bjs, did2s, staggered} → `estimate_N` | Per-package bodies in step-3 guide |
+| Compare estimators | `did_compare_estimators` → envelopes + wide table | Loop over estimators manually |
+| Extract event study | `did_extract_event_study` → `event_study_N` with `{betahat, sigma, tVec}`; pass `min_e` / `max_e` to trim long event windows before Step 4/5 | `HonestDiD:::sunab_beta_vcv` / `aggte(type="dynamic")` |
+| Power analysis (Step 4) | `did_power_analysis` → `power_result_N` | `pretrends::slope_for_power()` |
+| HonestDiD sensitivity (Step 5) | `did_honest_sensitivity` → `honest_result_N` | `createSensitivityResults_relativeMagnitudes()` |
+| DRDID (covariate DiD) | `did_drdid` → `estimate_N` | `DRDID::drdid()` |
+| Event-study / sensitivity plot | `did_plot` (auto-picks kind from source handle) | `ggdid`, `iplot`, `createSensitivityPlot_relativeMagnitudes` |
+| Narrative summary | `did_report` → markdown across every handle in the session | Manual write-up |
+| Session management | `did_session` (list / inspect / drop / status) | n/a |
+
+### Rules in tool-aware mode
+
+1. **Don't emit R code blocks for steps a tool covers.** Call the tool and paraphrase the JSON response in prose.
+2. **Reuse handles across calls.** Once `did_load_panel` returns `panel_1`, every later call references `panel_id="panel_1"` instead of re-loading.
+3. **Trust the standardized envelope.** `did_estimate` / `did_compare_estimators` return a consistent `{overall, event_study, metadata, handle}` shape; interpret that rather than parsing raw R objects.
+4. **Always read the `warnings` array on every tool response.** Diagonal-fallback sigma, skipped sub-computations, T/cohort < 3, non-PSD VCOV, and other caveats surface there; propagate them to the user's reading of the result.
+5. **Fall back to code-gen for capabilities the MCP doesn't expose yet.** Not every step guide code block has a tool — e.g., CS compositional diagnostics, wild-cluster bootstrap, and the advanced methods for reversible/continuous treatment. When you need something outside the table above, generate R code from the step guide.
+6. **Prefer `did_extract_event_study` before Step 4 / Step 5.** Both `did_power_analysis` and `did_honest_sensitivity` consume the canonical `event_study` handle; feeding them raw estimate handles is an error.
+
+### Canonical route in tool-aware mode
+
+```text
+did_load_panel → did_check_panel → did_profile_design
+                 ├─ CANONICAL route → did_estimate (cs)
+                 │                 → did_extract_event_study
+                 │                 → did_power_analysis / did_honest_sensitivity
+                 └─ STAGGERED route → did_diagnose_twfe
+                                   → did_estimate (primary) [+ did_compare_estimators]
+                                   → did_extract_event_study
+                                   → did_power_analysis
+                                   → did_honest_sensitivity
+                                   → did_plot  (on event_study or honest_result)
+                                   → did_report  (optional narrative)
+```
+
+See `mcp/README.md` in the monorepo root for install and wire-up. When the tools don't appear in your tool list, the MCP server is not registered — fall back to code-gen and let the user install it separately if they want the tool-aware path.
 
 ## Start Here
 

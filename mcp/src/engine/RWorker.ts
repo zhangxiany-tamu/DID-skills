@@ -88,7 +88,11 @@ export class RWorker {
         stdio: ["pipe", "pipe", "pipe"],
         env: {
           ...process.env,
-          R_DEFAULT_PACKAGES: "base,stats,utils,methods",
+          // Load graphics + grDevices in addition to the base set — panelView
+          // (did_plot_rollout) triggers base-graphics `title()` via ggplot
+          // rendering on some modes, and fails with "object 'title' not
+          // found" if the graphics package isn't on the search path.
+          R_DEFAULT_PACKAGES: "base,stats,utils,methods,graphics,grDevices",
           DID_MCP_BRIDGE_DIR: bridgeDir,
         },
       });
@@ -97,6 +101,16 @@ export class RWorker {
 
       const codec = new NdjsonCodec(
         (response) => {
+          // id=0 is the bridge's ready sentinel; emitted once, before the
+          // NDJSON main loop. Fulfills start() so the pool does not have to
+          // guess a warm-up duration.
+          if (response.id === 0) {
+            if (!this._started) {
+              this._started = true;
+              resolveStart();
+            }
+            return;
+          }
           const pending = this.pending.get(response.id);
           if (pending) {
             clearTimeout(pending.timer);
@@ -151,11 +165,19 @@ export class RWorker {
         );
       });
 
-      // Give R a moment to load jsonlite + source companion files.
+      // Hard cap on warm-up: if bridge.R is stuck before it emits ready, fail
+      // start() with a descriptive error rather than dangling indefinitely.
+      const startupTimeoutMs = 15_000;
       const startupTimer = setTimeout(() => {
-        this._started = true;
-        resolveStart();
-      }, 500);
+        if (!this._started) {
+          rejectStart(
+            new Error(
+              `R bridge did not emit ready sentinel within ${startupTimeoutMs}ms. ` +
+                `stderr: ${this.stderrBuffer.slice(-500)}`,
+            ),
+          );
+        }
+      }, startupTimeoutMs);
 
       proc.on("exit", () => clearTimeout(startupTimer));
     });

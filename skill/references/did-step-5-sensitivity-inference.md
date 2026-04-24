@@ -14,6 +14,21 @@
 
 Treat this file as the authoritative Step 5 workflow contract; `SKILL.md` should only route here.
 
+## Tool-Aware Path
+
+When `did-mcp` is registered, Step 5 is three tool calls:
+
+| Goal | Tool | Notes |
+|---|---|---|
+| Pull `{betahat, sigma, tVec}` from any estimate | `did_extract_event_study` | Dispatches on the estimator's R class (MP / fixest / did_imputation_result / staggered_combined). Returns `sigma_is_diagonal_fallback` + `fallback_reason` so you know whether sigma is the true VCOV (SA with HonestDiD present) or `diag(se^2)` — downstream HonestDiD results are only trustworthy when the matrix is the real thing. |
+| Run HonestDiD sensitivity | `did_honest_sensitivity` on an `event_study` handle | Default `method="relative_magnitudes"` with `Mbarvec = seq(0.5, 2, by=0.5)`; switch to `method="smoothness"` + `Mvec` when appropriate. Returns robust CI rows + the original (non-robust) CI + the breakdown M (smallest M at which the robust CI includes zero, or `NA` if the effect is robust to every tested M). |
+| Plot the sensitivity | `did_plot` on a `honest_result` handle | Auto-picks the HonestDiD plot kind; shows robust CIs vs. M with the original CI as a grey backdrop. |
+| Doubly-robust single-period DiD | `did_drdid` | Takes a panel (two distinct time values or `time_values: [pre, post]` on a longer panel), optional `xformla_vars` + `est_method` ∈ {dr, ipw, reg, trad, imp}. Returns a standard `estimate` handle with the overall ATT. |
+
+**Warnings to surface**: `did_honest_sensitivity` and `did_power_analysis` both emit diagonal-fallback warnings when the input event study's sigma is not a true VCOV. When the sensitivity breakdown M is very small or NA and the source was a diagonal-fallback event study, note that the result may be overly pessimistic or optimistic respectively — the recipes below describe the theoretically-correct construction of sigma for each estimator path.
+
+The rest of this guide — the Coefficient Extraction Cookbook, DRDID recipes, and the SA / CS full-sensitivity templates — is the **code-gen fallback** when the MCP is not registered, and also the authoritative reference for the construction details the tools implement internally.
+
 ## Coefficient Extraction Cookbook
 
 Before running HonestDiD or pretrends, you need three objects from your estimator:
@@ -28,9 +43,11 @@ This function extracts relative time periods from coefficient names across diffe
 ```r
 extract_time_periods <- function(coef_names) {
   patterns <- c(
-    ".*::([+-]?[0-9]+)$",               # fixest sunab: "year::3" -> 3
-    "^([+-]?[0-9]+)$",                  # did: "-2" -> -2
-    ".*[Tt]ime[^0-9+-]*([+-]?[0-9]+)$"  # generic: "Time_to_treat-3" -> -3
+    ".*::([+-]?[0-9]+)$",                 # fixest sunab via coef(): "year::3" -> 3
+    ".*\\)([+-]?[0-9]+)$",                # HonestDiD:::sunab_beta_vcv rownames:
+                                          #   "base::factor(sunab_cohorts)-2" -> -2
+    "^([+-]?[0-9]+)$",                    # did: "-2" -> -2
+    ".*[Tt]ime[^0-9+-]*([+-]?[0-9]+)$"    # generic: "Time_to_treat-3" -> -3
   )
   for (pat in patterns) {
     m <- regmatches(coef_names, regexec(pat, coef_names))
@@ -42,6 +59,18 @@ extract_time_periods <- function(coef_names) {
   return(NULL)  # No pattern matched -- caller must handle this
 }
 ```
+
+**Where to get coefficient names for SA.** Both sources work, but they have
+different formats:
+
+- `names(coef(sa_model))` — `"year::-2"`, matches pattern 1. Lengths align with
+  `coef(sa_model)`, which aggregates over cohorts.
+- `rownames(HonestDiD:::sunab_beta_vcv(sa_model)$beta)` —
+  `"base::factor(sunab_cohorts)-2"`, matches pattern 2. Lengths align with
+  `bv$beta` / `bv$sigma` used downstream for HonestDiD / pretrends.
+
+Important: `bv$beta` is an `(N x 1)` matrix, not a named vector, so
+`names(bv$beta)` returns `NULL`. Use `rownames(bv$beta)` or `names(coef(sa_model))`.
 
 ### From fixest / Sun-Abraham
 
@@ -158,6 +187,23 @@ Parameters:
 - `numPostPeriods`: Number of post-treatment periods in betahat
 - `Mbarvec`: Vector of M values to test (e.g., `seq(0.5, 2, by = 0.5)`)
 - `l_vec`: Weights on post-treatment periods (default: equal weights)
+
+> **Performance warning (real-world rule of thumb)**: The ARP CI computation
+> inside `createSensitivityResults_relativeMagnitudes` scales poorly with
+> `numPrePeriods` and is roughly linear in `length(Mbarvec)`. On a 10-pre,
+> 6-post event study a single Mbar value can take ~70s; 4 Mbar values = ~4–5
+> minutes. **Slice the event study to a reasonable window** (e.g. pre/post in
+> `[-5, 5]`) before calling. Subset `beta`, `sigma`, and `tVec` consistently:
+> ```r
+> keep <- tVec >= -5 & tVec <= 5 & tVec != -1   # also drop reference period
+> betahat_k <- betahat[keep]
+> sigma_k   <- sigma[keep, keep, drop = FALSE]
+> tVec_k    <- tVec[keep]
+> n_pre     <- sum(tVec_k < 0)
+> n_post    <- sum(tVec_k >= 0)
+> ```
+> This mirrors the MCP's `did_honest_sensitivity` default behavior and keeps
+> runtime under ~30s per dataset.
 
 **`createSensitivityResults(betahat, sigma, numPrePeriods, numPostPeriods, method, Mvec)`**
 

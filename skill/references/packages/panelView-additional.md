@@ -12,14 +12,21 @@ This addendum provides repository-level context not repeated in `panelView.md`.
 ## Repo-Only Insights
 
 - The package is a single-function package: `panelview()` handles all three plot types via the `type` argument.
-- Internally uses base R graphics (not ggplot2), so plots cannot be modified with `+` syntax after creation.
+- As of `panelView >= 1.1.17`, `panelview()` returns a ggplot object (class `"gg"` / `"ggplot"`). Earlier versions used base R graphics. Always print or assign the return value rather than relying on implicit printing.
 - The function name is lowercase (`panelview`) even though the package is uppercase (`panelView`).
 
 ## Practical Tips
 
 - **Large panels (>500 units)**: Treatment heatmaps become unreadable. Sample units or use `by.timing = TRUE` to compress the display.
 - **`by.timing = TRUE`**: Always use this for staggered designs — it groups units by treatment cohort, making the adoption pattern immediately visible.
-- **Save plots**: Use `pdf()` or `png()` before calling `panelview()` since the function uses base graphics and does not return a ggplot object.
+- **Save plots**: Wrap the call in `print()` and open a PNG/PDF device:
+  ```r
+  png("rollout.png", width = 9, height = 7, units = "in", res = 150)
+  print(panelview(y ~ treat, data = df, index = c("id", "year"),
+                  type = "treat", by.timing = TRUE))
+  dev.off()
+  ```
+  The bare `panelview(...)` call renders only when the returned ggplot is auto-printed at the REPL top level. Inside a function body, `lapply()`, `render()`, or a PNG device capture the return value is silently dropped unless you `print()` it.
 - **Multi-valued treatment**: The function supports non-binary treatment variables. Use custom `color` vectors to distinguish levels.
 
 ## Consistency Checks

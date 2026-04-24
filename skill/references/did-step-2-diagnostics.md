@@ -11,6 +11,20 @@
 
 Two complementary diagnostic tools for detecting problems with TWFE regression under staggered treatment adoption. Treat this file as the authoritative Step 2 workflow contract; `SKILL.md` should only route here.
 
+## Tool-Aware Path
+
+When `did-mcp` is registered, call `did_diagnose_twfe` instead of running the R recipes below manually. It runs both Goodman-Bacon (bacondecomp) and the de Chaisemartin-D'Haultfoeuille negative-weight check (TwoWayFEWeights), classifies each into a severity band, and reports an overall recommendation.
+
+- **Tool**: `did_diagnose_twfe`
+- **Inputs**: `panel_id` (required), optional `outcome_var`, `treat_var` (pass a true "currently-treated" indicator if you have one; otherwise the tool synthesizes `1{t >= gname & gname > 0}`), `run_bacon`, `run_weights`, `weights_type` (feTR / feS / fdTR / fdS, default `feTR`).
+- **Output**: `twfe_diagnostic_N` handle + a structured payload with:
+  - `bacon.forbidden_weight_pct` + severity band, bacon's `by_type` breakdown, `overall_estimate`
+  - `weights.negative_weight_pct` + severity band, positive/negative cell counts, TWFE β, sensibility
+  - `overall_severity` (worst of the two) and a plain-English `recommendation`
+- **Graceful degradation**: Bacon is automatically skipped (with a warning in the `warnings` array) on unbalanced panels or panels with >1000 units — TwoWayFEWeights alone is a sufficient diagnostic when the negative-weight share is ≥25%.
+
+When the tool isn't registered, use the manual recipes that follow.
+
 ## bacondecomp: Goodman-Bacon Decomposition
 
 ### What It Does

@@ -20,6 +20,22 @@
 
 Use this step before diagnostics/estimation to classify the treatment design and route to the correct DiD workflow. Treat this file as the authoritative Step 1 workflow contract; `SKILL.md` should only route here.
 
+## Tool-Aware Path
+
+When the `did-mcp` server is registered (tools `did_ping`, `did_load_panel`, … visible in your tool list), use these tools instead of emitting the R code below. The five Step 1 tools implement byte-aligned wrappers around the function bodies in this guide, so results are identical.
+
+| Sub-step | Tool | Produces |
+|---|---|---|
+| Load panel (csv / parquet) | `did_load_panel` | `panel_N` handle with the column schema baked in |
+| Panel integrity checks | `did_check_panel` | Structured report with `overall_ok` flag |
+| Timing profile and routing | `did_profile_design` | `design_profile_N` handle with `timing`, `route`, cohort counts, balance/absorbing flags |
+| Never-treated recoding | `did_recode_never_treated` (target ∈ {zero, na, inf, max_plus_10}) | New `panel_M` handle; source panel unchanged |
+| Rollout / outcome plot | `did_plot_rollout` (plot_type ∈ {rollout, outcome, both}) | `plot_N` handle(s); PNG on disk |
+
+Every subsequent tool (Steps 2–5) accepts a `panel_id` (or `design_profile_id`) — plumb the handles through, don't re-load the data. See `SKILL.md` → "Execution Mode: Tools vs. Code-gen" for the canonical route.
+
+The remainder of this guide is the **code-gen fallback** — use it when `did_*` tools are not registered, or when you need a detail the tools don't expose (e.g., custom plot layouts, interactive diagnostics).
+
 ## Goal
 
 Programmatically profile the dataset's treatment variable and panel structure to determine which estimators are valid. The output is a routing decision: standard staggered DiD pipeline (Steps 2-5) vs. advanced methods.
@@ -533,11 +549,13 @@ data(mpdta)
 # Create binary treatment indicator from timing variable
 mpdta$treat <- ifelse(mpdta$first.treat > 0 & mpdta$year >= mpdta$first.treat, 1, 0)
 
-# Treatment rollout heatmap grouped by cohort
-panelview(lemp ~ treat, data = mpdta,
-          index = c("countyreal", "year"),
-          type = "treat", by.timing = TRUE,
-          main = "Treatment Rollout: Minimum Wage Policy")
+# Treatment rollout heatmap grouped by cohort.
+# panelview() returns a ggplot — wrap in print() when rendering to a device
+# or calling from inside a function; at the REPL top level print is implicit.
+print(panelview(lemp ~ treat, data = mpdta,
+                index = c("countyreal", "year"),
+                type = "treat", by.timing = TRUE,
+                main = "Treatment Rollout: Minimum Wage Policy"))
 ```
 
 **What to look for:**
@@ -552,10 +570,10 @@ Visual pre-trend check: do treated and control groups move in parallel before tr
 
 ```r
 # Outcome trajectories separated by treatment status
-panelview(lemp ~ treat, data = mpdta,
-          index = c("countyreal", "year"),
-          type = "outcome", by.group = TRUE,
-          main = "Employment Trajectories: Treated vs Control")
+print(panelview(lemp ~ treat, data = mpdta,
+                index = c("countyreal", "year"),
+                type = "outcome", by.group = TRUE,
+                main = "Employment Trajectories: Treated vs Control"))
 ```
 
 **What to look for:**
@@ -587,12 +605,12 @@ check_already_treated(mpdta, "countyreal", "year", "first.treat")
 # 2. Profile treatment structure
 profile <- profile_did_design(mpdta, "countyreal", "year", "first.treat")
 
-# 2b. Visualize treatment rollout
+# 2b. Visualize treatment rollout (print() required when device-capturing)
 mpdta$treat <- ifelse(mpdta$first.treat > 0 & mpdta$year >= mpdta$first.treat, 1, 0)
-panelview(lemp ~ treat, data = mpdta, index = c("countyreal", "year"),
-          type = "treat", by.timing = TRUE, main = "Treatment Rollout")
-panelview(lemp ~ treat, data = mpdta, index = c("countyreal", "year"),
-          type = "outcome", by.group = TRUE, main = "Outcome Trajectories")
+print(panelview(lemp ~ treat, data = mpdta, index = c("countyreal", "year"),
+                type = "treat", by.timing = TRUE, main = "Treatment Rollout"))
+print(panelview(lemp ~ treat, data = mpdta, index = c("countyreal", "year"),
+                type = "outcome", by.group = TRUE, main = "Outcome Trajectories"))
 
 # 3. Inspect cohort sizes
 cohort_summary(mpdta, "countyreal", "first.treat")
