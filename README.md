@@ -7,6 +7,7 @@
 - [What's in the repo](#whats-in-the-repo)
 - [Install](#install)
 - [Quick start](#quick-start)
+- [MCP tool surface](#mcp-tool-surface)
 - [Use with other agents](#use-with-other-agents)
 - [How the skill and MCP interact](#how-the-skill-and-mcp-interact)
 - [Validation](#validation)
@@ -20,6 +21,7 @@
 |---|---|
 | `skill/` | Installable `did-analysis` Claude Code skill — pure markdown. Contains the workflow router, 5 step guides, per-package references, failure taxonomy, and validation runbook. |
 | `mcp/` | Optional companion `did-mcp` server — TypeScript MCP server + persistent R subprocess. Exposes 16 `did_*` tools that execute the skill's workflow end-to-end. |
+| `scripts/did-examples-lib.mjs` | Shared validation-panel preparation helpers for MCP and skill fallback audits. |
 | `AGENTS.md` | Monorepo conventions and maintainer read order. |
 | `install.sh` | Symlinks `skill/` into `~/.claude/skills/did-analysis/` and optionally builds the MCP. |
 | `MIGRATION.md` | Upgrade notes for users coming from the flat-layout `DID-skills` v1. |
@@ -58,9 +60,17 @@ estimate ATT with a heterogeneity-robust method, test pre-trends power, and repo
 sensitivity bounds. Flag any estimator disagreement.
 ```
 
-With the MCP registered, Claude will call `did_load_panel` → `did_profile_design` → `did_diagnose_twfe` → `did_estimate` (per estimator) → `did_extract_event_study` → `did_power_analysis` → `did_honest_sensitivity` → `did_plot` → `did_report`, returning a markdown narrative with ATTs, event-study coefficients, breakdown M̄, and a flagged estimator-agreement table.
+With the MCP registered, Claude will call `did_ping` → `did_load_panel` → `did_check_panel` → `did_profile_design` → `did_recode_never_treated` / `did_plot_rollout` as needed → `did_diagnose_twfe` → `did_estimate` / `did_compare_estimators` → `did_extract_event_study` → `did_power_analysis` → `did_honest_sensitivity` → `did_plot` → `did_report`, returning a markdown narrative with ATTs, event-study coefficients, breakdown M̄, and a flagged estimator-agreement table.
 
 Without the MCP, Claude reads `skill/SKILL.md` + the step guides and produces runnable R code for the same pipeline.
+
+## MCP tool surface
+
+The registered MCP server exposes 16 tools:
+
+`did_ping`, `did_session`, `did_load_panel`, `did_check_panel`, `did_profile_design`, `did_recode_never_treated`, `did_plot_rollout`, `did_diagnose_twfe`, `did_estimate`, `did_compare_estimators`, `did_extract_event_study`, `did_power_analysis`, `did_honest_sensitivity`, `did_plot`, `did_drdid`, and `did_report`.
+
+The skill's `METHOD_MATRIX.md` and `SKILL.md` are the source of truth for which workflow each tool covers.
 
 ## Use with other agents
 
@@ -88,6 +98,7 @@ The MCP's verification suite covers unit tests, smoke tests, estimator smokes, e
 npm test                 # vitest unit tests
 npm run build            # TypeScript build
 npm run smoke:all        # smoke-test.mjs + smoke-estimators.mjs + smoke-edgecases.mjs
+npm run smoke:recycle    # same core smoke path with forced R worker recycling
 npm run validate:real    # 6 real datasets × 16 tools, emits a markdown matrix
 ```
 
@@ -99,7 +110,7 @@ An additional harness validates the skill's R code-gen fallback recipes:
 cd skill && node scripts/audit-skill-recipes.mjs
 ```
 
-Both audit scripts pass on all 6 DID Examples datasets (96/96 MCP cells, 30/30 skill cells as of 2026-04-24).
+Both audit scripts pass on all 6 DID Examples datasets (96/96 MCP cells, 30/30 skill cells as of 2026-05-21).
 
 ## Requirements
 

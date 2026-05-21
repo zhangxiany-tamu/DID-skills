@@ -18,17 +18,21 @@ import { spawn } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
-  readFileSync,
   statSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  DEFAULT_EXAMPLES_DIR,
+  EXAMPLE_DATASET_ORDER,
+  fmt,
+  prepareDidExampleDatasets,
+} from "../../scripts/did-examples-lib.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MCP_ROOT = resolve(__dirname, "..");
 const SERVER = resolve(MCP_ROOT, "dist", "index.js");
-const DEFAULT_EXAMPLES_DIR = "/Users/xianyangzhang/My Drive/DID Examples";
 const EXAMPLES_DIR = process.env.DID_EXAMPLES_DIR || DEFAULT_EXAMPLES_DIR;
 const OUTPUT_DIR = process.env.DID_MCP_VALIDATION_OUTPUT_DIR ||
   resolve(MCP_ROOT, "validation-output");
@@ -53,368 +57,6 @@ const TOOLS = [
   "did_drdid",
   "did_report",
 ];
-
-// ## CSV helpers (duplicated from validate-real-examples.mjs intentionally —
-// audit is additive, not a modification).
-
-function parseCsv(text) {
-  const rows = [];
-  let row = [];
-  let field = "";
-  let inQuotes = false;
-  for (let i = 0; i < text.length; i += 1) {
-    const ch = text[i];
-    const next = text[i + 1];
-    if (inQuotes) {
-      if (ch === '"' && next === '"') { field += '"'; i += 1; }
-      else if (ch === '"') inQuotes = false;
-      else field += ch;
-      continue;
-    }
-    if (ch === '"') inQuotes = true;
-    else if (ch === ",") { row.push(field); field = ""; }
-    else if (ch === "\n") { row.push(field); rows.push(row); row = []; field = ""; }
-    else if (ch !== "\r") field += ch;
-  }
-  if (field.length > 0 || row.length > 0) { row.push(field); rows.push(row); }
-  if (rows.length === 0) return [];
-  const header = rows[0];
-  return rows.slice(1).filter((r) => r.some((v) => v !== "")).map((r) => {
-    const obj = {};
-    for (let i = 0; i < header.length; i += 1) obj[header[i]] = r[i] ?? "";
-    return obj;
-  });
-}
-
-function readCsv(p) { return parseCsv(readFileSync(p, "utf8")); }
-
-function csvEscape(v) {
-  const s = v === null || v === undefined ? "" : String(v);
-  return /[",\n\r]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
-}
-
-function writeCsv(p, rows, cols) {
-  const lines = [cols.map(csvEscape).join(",")];
-  for (const r of rows) lines.push(cols.map((c) => csvEscape(r[c])).join(","));
-  writeFileSync(p, `${lines.join("\n")}\n`);
-}
-
-function num(v) {
-  if (v === null || v === undefined) return NaN;
-  const s = String(v).trim();
-  if (s === "" || s.toUpperCase() === "NA" || s === ".") return NaN;
-  return Number(s);
-}
-
-function uniqueSorted(xs) {
-  return [...new Set(xs)].sort((a, b) => String(a).localeCompare(String(b)));
-}
-
-function addMappedId(rows, src, tgt) {
-  const vs = uniqueSorted(rows.map((r) => r[src]));
-  const ids = new Map(vs.map((v, i) => [v, String(i + 1)]));
-  for (const r of rows) r[tgt] = ids.get(r[src]);
-}
-
-function countBy(rows, fn) {
-  const m = new Map();
-  for (const r of rows) {
-    const k = fn(r);
-    m.set(k, (m.get(k) || 0) + 1);
-  }
-  return m;
-}
-
-function weightedMean(rows, vc, wc) {
-  let n = 0;
-  let d = 0;
-  for (const r of rows) {
-    const v = num(r[vc]);
-    const w = num(r[wc]);
-    if (Number.isFinite(v) && Number.isFinite(w) && w > 0) { n += v * w; d += w; }
-  }
-  return d > 0 ? n / d : NaN;
-}
-
-function fmt(v, dig = 4) {
-  return typeof v === "number" && Number.isFinite(v) ? v.toFixed(dig) : "NA";
-}
-
-// ## Scenario preparation (one per dataset).
-// Each returns { source, path, loadArgs, drdid }.
-
-function prepareMedicaidInsurance() {
-  const src = join(EXAMPLES_DIR, "medicaid-insurance", "ehec_data.csv");
-  const rows = readCsv(src);
-  addMappedId(rows, "stfips", "state_id");
-  for (const r of rows) {
-    const g = num(r.yexp2);
-    const y = num(r.year);
-    r.yexp2_clean = Number.isFinite(g) ? String(g) : "";
-    r.treat_post = Number.isFinite(g) && y >= g ? "1" : "0";
-    r.dr_treated_2014 = g === 2014 ? "1" : "0";
-  }
-  const out = join(TMP_DIR, "medicaid-insurance.csv");
-  writeCsv(out, rows, ["state_id", "stfips", "year", "dins", "yexp2_clean", "treat_post", "dr_treated_2014", "W"]);
-  return {
-    source: src,
-    path: out,
-    loadArgs: {
-      path: out,
-      id_var: "state_id",
-      time_var: "year",
-      treat_timing_var: "yexp2_clean",
-      treat_var: "treat_post",
-      outcome_var: "dins",
-    },
-    drdid: {
-      outcome_var: "dins",
-      treated_var: "dr_treated_2014",
-      time_values: [2013, 2014],
-      weights_var: "W",
-    },
-  };
-}
-
-function prepareMedicaidMortality() {
-  const src = join(EXAMPLES_DIR, "medicaid-mortality", "county_mortality_data.csv");
-  const excluded = new Set(["10", "11", "25", "36", "50"]);
-  const countyRows = readCsv(src).filter((r) => !excluded.has(String(num(r.stfips))) && Number.isFinite(num(r.crude_rate_20_64)));
-  const groups = new Map();
-  for (const r of countyRows) {
-    const k = `${r.stfips}::${r.year}`;
-    if (!groups.has(k)) groups.set(k, []);
-    groups.get(k).push(r);
-  }
-  const rows = [];
-  for (const g of groups.values()) {
-    const f = g[0];
-    const y = num(f.year);
-    const ya = num(f.yaca);
-    const G = [2014, 2015, 2016, 2019].includes(ya) ? ya : NaN;
-    const pop = g.reduce((s, r) => { const v = num(r.population_20_64); return s + (Number.isFinite(v) ? v : 0); }, 0);
-    rows.push({
-      state_id: String(f.stfips),
-      state: f.state,
-      year: String(y),
-      mortality_rate: String(weightedMean(g, "crude_rate_20_64", "population_20_64")),
-      first_treat: Number.isFinite(G) ? String(G) : "",
-      treat_post: Number.isFinite(G) && y >= G ? "1" : "0",
-      dr_treated_2014: G === 2014 ? "1" : "0",
-      pop_weight: String(pop),
-    });
-  }
-  rows.sort((a, b) => Number(a.state_id) - Number(b.state_id) || Number(a.year) - Number(b.year));
-  const out = join(TMP_DIR, "medicaid-mortality.csv");
-  writeCsv(out, rows, ["state_id", "state", "year", "mortality_rate", "first_treat", "treat_post", "dr_treated_2014", "pop_weight"]);
-  return {
-    source: src,
-    path: out,
-    loadArgs: {
-      path: out,
-      id_var: "state_id",
-      time_var: "year",
-      treat_timing_var: "first_treat",
-      treat_var: "treat_post",
-      outcome_var: "mortality_rate",
-    },
-    drdid: {
-      outcome_var: "mortality_rate",
-      treated_var: "dr_treated_2014",
-      time_values: [2013, 2014],
-      weights_var: "pop_weight",
-    },
-  };
-}
-
-function prepareTeacherBargaining() {
-  const src = join(EXAMPLES_DIR, "teacher-bargaining", "paglayan_dataset.csv");
-  const rows = readCsv(src).filter((r) => {
-    const y = num(r.year);
-    return y >= 1959 && y <= 1990 && Number.isFinite(num(r.lnppexpend));
-  });
-  addMappedId(rows, "State", "state_id");
-  // Pick the largest cohort as the drdid treated group (most power).
-  const gCounts = countBy(rows, (r) => String(num(r.YearCBrequired)));
-  let bestG = NaN;
-  let bestCount = -1;
-  for (const [k, c] of gCounts.entries()) {
-    const G = Number(k);
-    if (Number.isFinite(G) && G >= 1960 && G <= 1980 && c > bestCount) { bestG = G; bestCount = c; }
-  }
-  for (const r of rows) {
-    const g = num(r.YearCBrequired);
-    const y = num(r.year);
-    r.g_clean = Number.isFinite(g) ? String(g) : "";
-    r.treat_post = Number.isFinite(g) && y >= g ? "1" : "0";
-    r.dr_treated = Number.isFinite(g) && g === bestG ? "1" : "0";
-  }
-  const out = join(TMP_DIR, "teacher-bargaining.csv");
-  writeCsv(out, rows, ["state_id", "State", "year", "lnppexpend", "g_clean", "treat_post", "dr_treated"]);
-  const drPre = Number.isFinite(bestG) ? bestG - 1 : 1964;
-  const drPost = Number.isFinite(bestG) ? bestG : 1965;
-  return {
-    source: src,
-    path: out,
-    loadArgs: {
-      path: out,
-      id_var: "state_id",
-      time_var: "year",
-      treat_timing_var: "g_clean",
-      treat_var: "treat_post",
-      outcome_var: "lnppexpend",
-    },
-    drdid: {
-      outcome_var: "lnppexpend",
-      treated_var: "dr_treated",
-      time_values: [drPre, drPost],
-    },
-  };
-}
-
-function prepareDivorceLaws() {
-  const src = join(EXAMPLES_DIR, "divorce-laws", "divorce_data.csv");
-  const raw = readCsv(src).filter((r) => {
-    const y = num(r.year);
-    return !["AK", "OK"].includes(r.st) && y >= 1968 && y <= 1985 && Number.isFinite(num(r.div_rate));
-  });
-  const nY = uniqueSorted(raw.map((r) => r.year)).length;
-  const c = countBy(raw, (r) => r.st);
-  const complete = new Set([...c.entries()].filter(([, n]) => n === nY).map(([s]) => s));
-  const rows = raw.filter((r) => complete.has(r.st));
-  addMappedId(rows, "st", "state_id");
-  // Pick the most common post-1968 reform year as drdid cohort.
-  const gCounts = countBy(rows, (r) => String(num(r.lfdivlaw)));
-  let bestG = NaN;
-  let bestCount = -1;
-  for (const [k, cnt] of gCounts.entries()) {
-    const G = Number(k);
-    if (Number.isFinite(G) && G >= 1969 && G <= 1977 && cnt > bestCount) { bestG = G; bestCount = cnt; }
-  }
-  for (const r of rows) {
-    const g = num(r.lfdivlaw);
-    const y = num(r.year);
-    r.g_clean = g === 2000 ? "" : String(g);
-    r.treat_post = g !== 2000 && y >= g ? "1" : "0";
-    r.dr_treated = Number.isFinite(g) && g === bestG ? "1" : "0";
-  }
-  const out = join(TMP_DIR, "divorce-laws.csv");
-  writeCsv(out, rows, ["state_id", "st", "year", "div_rate", "g_clean", "treat_post", "dr_treated", "stpop"]);
-  const drPre = Number.isFinite(bestG) ? bestG - 1 : 1968;
-  const drPost = Number.isFinite(bestG) ? bestG : 1969;
-  return {
-    source: src,
-    path: out,
-    loadArgs: {
-      path: out,
-      id_var: "state_id",
-      time_var: "year",
-      treat_timing_var: "g_clean",
-      treat_var: "treat_post",
-      outcome_var: "div_rate",
-    },
-    drdid: {
-      outcome_var: "div_rate",
-      treated_var: "dr_treated",
-      time_values: [drPre, drPost],
-      weights_var: "stpop",
-    },
-  };
-}
-
-function prepareSentencingLaws() {
-  const src = join(EXAMPLES_DIR, "sentencing-laws", "sentencing_data.csv");
-  const complete = readCsv(src).filter((r) => Number.isFinite(num(r.lnpcrrobgun)));
-  const allYears = uniqueSorted(complete.map((r) => r.year));
-  const c = countBy(complete, (r) => r.state_fips);
-  const full = new Set([...c.entries()].filter(([, n]) => n === allYears.length).map(([s]) => s));
-  const rows = complete.filter((r) => full.has(r.state_fips));
-  // Find most common treatment_year cohort post-1975.
-  const gCounts = countBy(rows, (r) => String(num(r.treatment_year)));
-  let bestG = NaN;
-  let bestCount = -1;
-  for (const [k, cnt] of gCounts.entries()) {
-    const G = Number(k);
-    if (Number.isFinite(G) && G > 1970 && cnt > bestCount) { bestG = G; bestCount = cnt; }
-  }
-  for (const r of rows) {
-    const adoption = num(r.treatment_year);
-    const y = num(r.year);
-    const g = adoption > 0 ? adoption + 1 : NaN;
-    r.g_clean = Number.isFinite(g) ? String(g) : "";
-    r.treat_absorbing = Number.isFinite(g) && y >= g ? "1" : "0";
-    r.dr_treated = Number.isFinite(adoption) && adoption === bestG ? "1" : "0";
-  }
-  const out = join(TMP_DIR, "sentencing-laws.csv");
-  writeCsv(out, rows, ["state_fips", "state_name", "year", "lnpcrrobgun", "g_clean", "treat_absorbing", "dr_treated"]);
-  const drPre = Number.isFinite(bestG) ? bestG : 1975;
-  const drPost = Number.isFinite(bestG) ? bestG + 1 : 1976;
-  return {
-    source: src,
-    path: out,
-    loadArgs: {
-      path: out,
-      id_var: "state_fips",
-      time_var: "year",
-      treat_timing_var: "g_clean",
-      treat_var: "treat_absorbing",
-      outcome_var: "lnpcrrobgun",
-    },
-    drdid: {
-      outcome_var: "lnpcrrobgun",
-      treated_var: "dr_treated",
-      time_values: [drPre, drPost],
-    },
-  };
-}
-
-function prepareBankDeregulation() {
-  const src = join(EXAMPLES_DIR, "bank-deregulation", "bank_deregulation_data.csv");
-  const raw = readCsv(src);
-  const rows = raw.filter((r) => {
-    const y = num(r.wrkyr);
-    const g = num(r.branch_reform);
-    const gini = num(r.gini);
-    return y <= 1998 && g > 1976 && Number.isFinite(gini) && gini > 0;
-  });
-  // For DRDID, pick the earliest in-sample cohort as treated.
-  const gCounts = countBy(rows, (r) => String(num(r.branch_reform)));
-  let bestG = NaN;
-  let bestCount = -1;
-  for (const [k, cnt] of gCounts.entries()) {
-    const G = Number(k);
-    if (Number.isFinite(G) && G > 1976 && G <= 1998 && cnt > bestCount) { bestG = G; bestCount = cnt; }
-  }
-  for (const r of rows) {
-    const g = num(r.branch_reform);
-    const y = num(r.wrkyr);
-    r.branch_g = g > 1998 ? "0" : String(g);
-    r.treat_intra = g <= 1998 && y >= g ? "1" : "0";
-    r.log_gini = String(Math.log(num(r.gini)));
-    r.dr_treated = Number.isFinite(g) && g === bestG ? "1" : "0";
-  }
-  const out = join(TMP_DIR, "bank-deregulation.csv");
-  writeCsv(out, rows, ["statefip", "state", "wrkyr", "log_gini", "branch_g", "treat_intra", "dr_treated"]);
-  const drPre = Number.isFinite(bestG) ? bestG - 1 : 1978;
-  const drPost = Number.isFinite(bestG) ? bestG : 1979;
-  return {
-    source: src,
-    path: out,
-    loadArgs: {
-      path: out,
-      id_var: "statefip",
-      time_var: "wrkyr",
-      treat_timing_var: "branch_g",
-      treat_var: "treat_intra",
-      outcome_var: "log_gini",
-    },
-    drdid: {
-      outcome_var: "log_gini",
-      treated_var: "dr_treated",
-      time_values: [drPre, drPost],
-    },
-  };
-}
 
 // ## MCP client (stdio)
 
@@ -621,6 +263,39 @@ function summarizeEstimate(est) {
   const att = est?.overall?.att;
   const ci = [est?.overall?.ci_lower, est?.overall?.ci_upper];
   return `ATT=${fmt(att)}, CI=[${fmt(ci[0])}, ${fmt(ci[1])}]`;
+}
+
+const EXPECTED_WARNING_PATTERNS = [
+  /small groups/i,
+  /single cross-sectional unit/i,
+  /drop (this|these) cohort/i,
+  /clustering the standard errors requires using the bootstrap/i,
+  /Not returning pre-test Wald statistic due to singular covariance matrix/i,
+  /not positive semi-definite and was 'fixed'/i,
+  /T\/cohort ratio .* SA may be rank-deficient/i,
+  /var_conservative is less than adjustmentFactor/i,
+  /trimmed event study/i,
+  /CI is open at one of the endpoints/i,
+];
+
+const ESCALATED_WARNING_PATTERNS = [
+  /\bNA[ _-]?breakdown\b/i,
+  /\bNaN\b/i,
+  /\bdeprecated\b/i,
+  /\bfailed\b/i,
+  /\berror\b/i,
+  /nonconformable/i,
+  /dimension mismatch/i,
+];
+
+function classifyWarning(message) {
+  if (EXPECTED_WARNING_PATTERNS.some((pattern) => pattern.test(message))) {
+    return "expected";
+  }
+  if (ESCALATED_WARNING_PATTERNS.some((pattern) => pattern.test(message))) {
+    return "escalated";
+  }
+  return "review";
 }
 
 async function timed(cell, fn) {
@@ -1164,23 +839,23 @@ function renderMarkdown(results) {
     }
   }
 
-  // Escalated warnings list.
-  const escalated = [];
-  const patterns = [/\bNA[ _-]?breakdown\b/i, /singular/i, /not positive semi-definite/i, /rank.?deficient/i, /deprecated/i, /NaN/, /failed/i];
+  // Warning classification. The allowlist keeps common data-design warnings
+  // out of the bug bucket while still surfacing novel warnings for review.
+  const warningBuckets = { expected: [], review: [], escalated: [] };
   for (const r of results) {
     for (const t of TOOLS) {
       for (const w of r.cells[t].warnings) {
-        if (patterns.some((p) => p.test(w.message))) {
-          escalated.push({ dataset: r.title, tool: t, message: w.message });
-        }
+        const kind = classifyWarning(w.message);
+        warningBuckets[kind].push({ dataset: r.title, tool: t, message: w.message });
       }
     }
   }
-  if (escalated.length > 0) {
-    lines.push("## Escalated Warnings (potential bugs)");
+  const renderWarningBucket = (title, items) => {
+    if (items.length === 0) return;
+    lines.push(`## ${title}`);
     lines.push("");
     const dedup = new Map();
-    for (const e of escalated) {
+    for (const e of items) {
       const k = `${e.dataset}::${e.tool}::${e.message.slice(0, 200)}`;
       if (!dedup.has(k)) dedup.set(k, { ...e, count: 0 });
       dedup.get(k).count += 1;
@@ -1189,6 +864,11 @@ function renderMarkdown(results) {
       lines.push(`- **${e.dataset}** / \`${e.tool}\` (x${e.count}): ${String(e.message).slice(0, 400)}`);
     }
     lines.push("");
+  };
+  renderWarningBucket("Expected Data-Design Warnings", warningBuckets.expected);
+  renderWarningBucket("Warnings To Review", warningBuckets.review);
+  if (warningBuckets.escalated.length > 0) {
+    renderWarningBucket("Escalated Warnings", warningBuckets.escalated);
   }
 
   // Summary
@@ -1214,27 +894,17 @@ async function main() {
   mkdirSync(TMP_DIR, { recursive: true });
   mkdirSync(OUTPUT_DIR, { recursive: true });
 
-  const scenarios = [
-    ["medicaid-insurance", prepareMedicaidInsurance],
-    ["medicaid-mortality", prepareMedicaidMortality],
-    ["teacher-bargaining", prepareTeacherBargaining],
-    ["divorce-laws", prepareDivorceLaws],
-    ["sentencing-laws", prepareSentencingLaws],
-    ["bank-deregulation", prepareBankDeregulation],
-  ];
+  const scenarios = prepareDidExampleDatasets({
+    examplesDir: EXAMPLES_DIR,
+    tmpDir: TMP_DIR,
+    names: EXAMPLE_DATASET_ORDER,
+  });
 
   const results = [];
-  for (const [name, prep] of scenarios) {
-    console.log(`\n=== ${name} ===`);
-    let prepared;
-    try {
-      prepared = prep();
-    } catch (e) {
-      console.log(`PREP FAIL: ${e.message}`);
-      continue;
-    }
-    const bench = BENCHMARKS[name];
-    const result = await auditDataset(name, prepared, bench);
+  for (const prepared of scenarios) {
+    console.log(`\n=== ${prepared.name} ===`);
+    const bench = BENCHMARKS[prepared.name];
+    const result = await auditDataset(prepared.name, prepared, bench);
     results.push(result);
     for (const t of TOOLS) {
       const c = result.cells[t];

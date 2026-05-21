@@ -2,41 +2,40 @@
 
 Documents the package versions observed during the **last local validation pass** of this skill. Check these against installed versions when troubleshooting API mismatches.
 
-Last updated: 2026-04-09
+Last updated: 2026-05-21
 
-Validation context: first lean local validation cycle completed on 2026-04-09 under R 4.3.2 using the workflows in [`../VALIDATION_RUNBOOK.md`](../VALIDATION_RUNBOOK.md). Several packages still remain `installed_not_exercised` or `missing_local`; keep those follow-ups in [`../BACKLOG.md`](../BACKLOG.md). Refresh this file only after a new validation pass and its follow-up notes are recorded there.
+Validation context: maintenance validation completed on 2026-05-21 under R 4.5.2 on `aarch64-apple-darwin24.4.0`. The pass ran the MCP smoke suite, the six-scenario real-data validation, the 16-tool x 6-dataset MCP audit matrix, the skill R fallback recipe audit, forced worker recycling, and quick DCDH package examples. Refresh this file only after a new validation pass and its follow-up notes are recorded in [`../BACKLOG.md`](../BACKLOG.md).
 
 ## Documented Package Versions
 
 | Package | Version | Validation status | Source | Primary CRAN/GitHub |
 |---------|---------|-------------------|--------|---------------------|
 | bacondecomp | 0.1.1 | `validated_local` | CRAN | [CRAN](https://cran.r-project.org/package=bacondecomp) |
-| did | 2.1.2 | `validated_local` | CRAN | [CRAN](https://cran.r-project.org/package=did) |
-| did2s | 1.0.2 | `installed_not_exercised` | CRAN | [CRAN](https://cran.r-project.org/package=did2s) |
-| didimputation | 0.3.0 | `installed_not_exercised` | CRAN | [CRAN](https://cran.r-project.org/package=didimputation) |
-| DIDmultiplegt | 2.0.0 | `load_validated_with_rgl_useNULL` | CRAN | [CRAN](https://cran.r-project.org/package=DIDmultiplegt) |
-| DIDmultiplegtDYN | 2.1.2 | `validated_local_with_rgl_useNULL` | CRAN | [CRAN](https://cran.r-project.org/package=DIDmultiplegtDYN) |
-| DRDID | 1.2.2 | `installed_not_exercised` | CRAN | [CRAN](https://cran.r-project.org/package=DRDID) |
-| etwfe | — | `missing_local` | CRAN | [CRAN](https://cran.r-project.org/package=etwfe) |
-| fixest | 0.12.1 | `validated_local` | CRAN | [CRAN](https://cran.r-project.org/package=fixest) |
-| gsynth | — | `missing_local` | CRAN | [CRAN](https://cran.r-project.org/package=gsynth) |
+| did | 2.3.0 | `validated_local` | CRAN | [CRAN](https://cran.r-project.org/package=did) |
+| did2s | 1.2.0 | `validated_local` | CRAN | [CRAN](https://cran.r-project.org/package=did2s) |
+| didimputation | 0.5.0 | `validated_local` | CRAN | [CRAN](https://cran.r-project.org/package=didimputation) |
+| DIDmultiplegt | 2.0.0 | `quick_example_validated_with_polars` | CRAN | [CRAN](https://cran.r-project.org/package=DIDmultiplegt) |
+| DIDmultiplegtDYN | 2.3.0 | `quick_example_validated_with_polars` | CRAN | [CRAN](https://cran.r-project.org/package=DIDmultiplegtDYN) |
+| DRDID | 1.2.3 | `validated_local` | CRAN | [CRAN](https://cran.r-project.org/package=DRDID) |
+| etwfe | 0.6.0 | `installed_not_exercised` | CRAN | [CRAN](https://cran.r-project.org/package=etwfe) |
+| fixest | 0.13.2 | `validated_local` | CRAN | [CRAN](https://cran.r-project.org/package=fixest) |
+| gsynth | 1.3.1 | `installed_not_exercised` | CRAN | [CRAN](https://cran.r-project.org/package=gsynth) |
 | HonestDiD | 0.2.6 | `validated_local` | CRAN | [CRAN](https://cran.r-project.org/package=HonestDiD) |
-| panelView | — | `missing_local` | CRAN | [CRAN](https://cran.r-project.org/package=panelView) |
-| polars | — | `missing_local` | r-universe | [r-universe](https://rpolars.r-universe.dev) |
+| panelView | 1.1.18 | `validated_local` | CRAN | [CRAN](https://cran.r-project.org/package=panelView) |
+| polars | 1.8.0.9000 | `validated_local_for_dcdh` | r-universe | [r-universe](https://rpolars.r-universe.dev) |
 | pretrends | 0.1.0 | `validated_local` | GitHub | [GitHub](https://github.com/jonathandroth/pretrends) |
-| staggered | 1.2.2 | `installed_not_exercised` | CRAN | [CRAN](https://cran.r-project.org/package=staggered) |
-| synthdid | — | `missing_local` | GitHub | [GitHub](https://github.com/synth-inference/synthdid) |
+| staggered | 1.2.2 | `validated_local` | CRAN | [CRAN](https://cran.r-project.org/package=staggered) |
+| synthdid | 0.0.9 | `installed_not_exercised` | GitHub | [GitHub](https://github.com/synth-inference/synthdid) |
 | TwoWayFEWeights | 2.0.4 | `validated_local` | CRAN | [CRAN](https://cran.r-project.org/package=TwoWayFEWeights) |
 | YatchewTest | 1.1.1 | `installed_not_exercised` | CRAN | [CRAN](https://cran.r-project.org/package=YatchewTest) |
 
 ## Notes
 
-- This local pass validated workflows directly on `did`, `fixest`, `bacondecomp`, `TwoWayFEWeights`, `pretrends`, `HonestDiD`, and `DIDmultiplegtDYN`.
-- `panelView`, `etwfe`, `gsynth`, `synthdid`, and `polars` were not installed locally.
-- Several installed package versions were older than the previously documented target versions, especially `did`, `fixest`, `did2s`, `didimputation`, `HonestDiD`, `DRDID`, and `DIDmultiplegtDYN`.
-- `DIDmultiplegt` and `DIDmultiplegtDYN` required `options(rgl.useNULL = TRUE)` to load in this headless macOS environment; see `did-troubleshooting.md`.
-- The local DCDH validation used `DIDmultiplegtDYN` 2.1.2, so this pass does **not** validate the newer `2.3.0+` `polars` behavior documented previously.
-- `HonestDiD` completed successfully but emitted open-endpoint CI warnings in the `base_stagg` workflow, so interval length should be interpreted cautiously.
+- The 2026-05-21 pass validated the P0 MCP and skill fallback workflows directly on six DID Examples datasets: Medicaid insurance, Medicaid mortality, teacher collective bargaining, unilateral divorce laws, sentencing enhancements, and bank deregulation.
+- `did2s`, `didimputation`, `staggered`, `DRDID`, and `panelView` are now directly exercised by the maintained audits.
+- `DIDmultiplegtDYN` 2.3.0 and `DIDmultiplegt` 2.0.0 both completed package quick examples with `polars` loaded. Keep `options(rgl.useNULL = TRUE)` documented for headless environments because it remains a low-cost workaround.
+- `etwfe`, `gsynth`, `synthdid`, and `YatchewTest` are installed locally but still outside the defended P0 audit path.
+- HonestDiD still emits open-endpoint CI warnings on some real examples; the MCP audit now treats those as expected numerical warnings unless they coincide with failed estimates or missing robust rows.
 
 ## Validation Loop
 

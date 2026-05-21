@@ -10,6 +10,15 @@ two coordinated parts:
   core workflow as agent-callable tools backed by a TypeScript MCP server and a
   persistent R subprocess.
 
+## Contents
+
+- [What This Repo Is](#what-this-repo-is)
+- [What This Repo Is Not](#what-this-repo-is-not)
+- [Repo Map](#repo-map)
+- [Maintainer Read Order](#maintainer-read-order)
+- [Editing Rules](#editing-rules)
+- [Current State (2026-05-21)](#current-state-2026-05-21)
+
 ## What This Repo Is
 
 - A knowledge base for modern Difference-in-Differences workflows in R.
@@ -36,6 +45,8 @@ two coordinated parts:
 - `skill/NEXT_STEPS.md` — shortest maintainer handoff.
 - `mcp/` — `did-mcp` TypeScript/R implementation, smoke tests, and MCP config
   example.
+- `scripts/did-examples-lib.mjs` — shared DID Examples CSV preparation helpers
+  used by MCP and skill validation audits.
 - `install.sh` — symlinks `skill/` into `~/.claude/skills/did-analysis/` and
   optionally builds `mcp/`.
 
@@ -67,7 +78,7 @@ two coordinated parts:
 - Prefer built-in package datasets or standard package examples in docs and
   validation notes.
 
-## Current State (2026-04-24)
+## Current State (2026-05-21)
 
 ### Completed
 
@@ -78,6 +89,12 @@ two coordinated parts:
   Step 1 loading/checking/profiling/recode/rollout, Step 2 TWFE diagnostics,
   Step 3 estimators/comparison/event-study extraction, Step 4 power analysis,
   Step 5 HonestDiD sensitivity, plus plotting, DRDID, and narrative reports.
+- The 2026-05-21 validation pass succeeded for Node 22 build/tests/smokes,
+  forced worker recycling, six real-data MCP scenarios, the 16-tool x 6-dataset
+  MCP matrix, and the skill R fallback recipe audit.
+- `panelView`, `did2s`, `didimputation`, `staggered`, `DRDID`,
+  `DIDmultiplegtDYN`, `DIDmultiplegt`, and `polars` are installed locally and
+  exercised by either the maintained audits or quick package examples.
 
 ### Known Limitations
 
@@ -86,6 +103,8 @@ two coordinated parts:
 - Some advanced-method workflows remain code-generation only; use MCP tools
   for covered `did_*` workflow steps and fall back to step-guide R code outside
   that surface.
+- `etwfe`, `gsynth`, `synthdid`, and `YatchewTest` are installed locally but
+  remain outside the defended P0 audit path.
 
 ### Next Work
 
@@ -94,3 +113,5 @@ two coordinated parts:
 - Refresh `skill/references/package-versions.md` only after validation passes.
 - Keep `skill/BACKLOG.md` evidence-driven rather than expanding scope
   speculatively.
+- Keep `scripts/did-examples-lib.mjs` as the shared source for DID Examples
+  validation-panel preparation across MCP and skill fallback audits.

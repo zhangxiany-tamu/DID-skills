@@ -92,11 +92,15 @@ registered.
 - R-side handlers live in `r/bridge.R` as `dispatch_<method>` functions. R handlers should mirror the R function bodies documented in `../skill/references/did-step-*-*.md` so the MCP path and the skill's code-gen fallback produce identical results.
 - Build: `npm run dev` (watch mode), `npm run build` (once).
 - Tests: `npm test` (vitest). Fixtures: `did::mpdta` and `create_did_example_data()` from `../skill/references/did-step-1-treatment-structure.md` — no external CSVs.
+- Smoke tests: `npm run smoke:all` covers the standard server path, all five estimators, and edge cases; `npm run smoke:recycle` forces an R worker recycle before nearly every tool call to verify handle persistence.
 - Real-example validation: `npm run validate:real` uses local CSVs from
   `/Users/xianyangzhang/My Drive/DID Examples` by default. Override with
   `DID_EXAMPLES_DIR=/path/to/examples`. The generated report records each
   scenario's validation-panel preparation notes so reviewers can distinguish
   source datasets from the MCP-sized panels loaded during the run.
+- DID Examples CSV preparation is shared with the skill fallback audit through
+  `../scripts/did-examples-lib.mjs`; update that helper rather than copying
+  prep logic into multiple validation scripts.
 
 ## Troubleshooting
 

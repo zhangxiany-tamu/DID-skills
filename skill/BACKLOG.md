@@ -4,7 +4,7 @@ This file is the working queue for improving the skill without turning it into a
 
 ## Current Goal
 
-Make `did-analysis` easier to trust and maintain by defending a small set of real workflows well.
+Keep `did-analysis` trustworthy by defending the P0 workflows with repeatable MCP and skill-fallback validation.
 
 ## Read Order
 
@@ -23,39 +23,39 @@ Make `did-analysis` easier to trust and maintain by defending a small set of rea
 | Refresh package versions only after that validation pass | Avoid version churn that is not tied to actual workflow checks. | `done` |
 | Keep the Medicaid-style multilevel workflow documented and validated | This is a real pain point already seen in repo use. | `ongoing` |
 | Expand install/runtime troubleshooting only when failures are real | Keeps maintenance evidence-driven. | `ongoing` |
+| Keep recycle/recovery validation on the regular smoke surface | Handles must survive worker swaps in long sessions. | `done` |
 
 ## P1 Priorities
 
-- Revisit `DRDID`, `etwfe`, `gsynth`, and `synthdid` after the `P0` workflows are stable.
+- Revisit `etwfe`, `gsynth`, and `synthdid` after the `P0` workflows are stable.
 - Decide whether any `P1` method deserves promotion based on repeated real use.
-- Consider a tiny local structural-check script only if manual checking becomes annoying.
+- Consider promoting deeper worker-pool unit tests if recycle/crash behavior changes again.
 
 ## Current Known Gaps
 
-- `panelView` is not installed locally, so Step 1 visualization was not exercised in the 2026-04-09 pass.
-- The multilevel treatment workflow was validated on a synthetic state-treatment / county-outcome panel because the Medicaid dataset is not bundled in this repo.
-- `did2s`, `didimputation`, `staggered`, `DRDID`, and `YatchewTest` are installed locally but were not directly exercised in the first lean pass.
-- `etwfe`, `gsynth`, `synthdid`, and `polars` are missing locally.
-- `DIDmultiplegt` loads locally only with the `rgl.useNULL` workaround and was not directly exercised beyond load validation.
+- The real-data validation uses an aggregated Medicaid mortality panel; a full county-outcome/state-treatment multilevel workflow remains a separate documentation-level check.
+- `etwfe`, `gsynth`, `synthdid`, and `YatchewTest` are installed locally but remain outside the defended P0 audit path.
+- DCDH-family package quick examples pass with `polars`, but the advanced-method workflows remain code-generation only rather than MCP tools.
+- HonestDiD open-endpoint CI warnings still appear on some real examples and should remain visible in reports.
 
-## Validation Results (2026-04-09)
+## Validation Results (2026-05-21)
 
-- Workflow 1: success on `did::mpdta` with `did` 2.1.2 and `fixest` 0.12.1; design routed correctly as staggered, binary, and absorbing. `panelView` was unavailable locally.
-- Workflow 2: success on `bacondecomp::castle`; forbidden-comparison share was `3.19%` and negative-weight share was `0.00%`, both `MINIMAL`.
-- Workflow 3: success on `fixest::base_stagg`; the `sunab -> pretrends -> HonestDiD` chain ran end-to-end. HonestDiD emitted open-endpoint CI warnings, so interval length should be interpreted cautiously.
-- Workflow 4: success on a synthetic multilevel panel; state-level treatment propagation and state-clustered `fixest` syntax both worked.
-- Workflow 5: success for the DCDH route through `DIDmultiplegtDYN` 2.1.2 on `favara_imbs`, but only after setting `options(rgl.useNULL = TRUE)`. The wrapper package `DIDmultiplegt` was load-validated with the same workaround but not estimation-validated.
+- MCP build, unit tests, `smoke:all`, and forced recycle smoke all pass under the declared Node 22 runtime.
+- `npm run validate:real` passes all six DID Examples scenarios and exercises all 16 registered tools at least once.
+- `node scripts/audit-mcp-matrix.mjs` passes all 96 tool-dataset cells.
+- `node skill/scripts/audit-skill-recipes.mjs` passes all 30 skill fallback recipe cells.
+- P0 estimator paths `did`, `fixest`, `did2s`, `didimputation`, `staggered`, `DRDID`, `pretrends`, `HonestDiD`, `panelView`, `bacondecomp`, and `TwoWayFEWeights` are directly exercised.
+- `DIDmultiplegtDYN` 2.3.0 and `DIDmultiplegt` 2.0.0 quick examples both pass with `polars`.
 
 ## Validation Queue
 
 Run these first and document the outcome in this file if anything breaks:
 
-1. Install `panelView` locally and re-run Step 1 visualization
-2. Re-run the multilevel route on the real Medicaid analysis dataset
-3. Exercise `did2s`, `didimputation`, and `staggered` directly in local validation
-4. Exercise `DRDID` directly in local validation
-5. Confirm whether newer `DIDmultiplegtDYN` / `polars` behavior changes the DCDH notes
-6. Revisit the HonestDiD open-endpoint warning on `fixest::base_stagg` and check whether grid settings or a newer HonestDiD version remove it
+1. Re-run `npm run build`, `npm test`, `npm run smoke:all`, and `npm run smoke:recycle` after MCP changes.
+2. Re-run `npm run validate:real`, `node scripts/audit-mcp-matrix.mjs`, and `node ../skill/scripts/audit-skill-recipes.mjs` after workflow or package-version changes.
+3. Revisit the full county-outcome/state-treatment multilevel route if the raw Medicaid mortality workflow becomes a priority.
+4. Revisit the HonestDiD open-endpoint warnings only when they affect interpretation or a package update changes behavior.
+5. Consider direct `etwfe`, `gsynth`, or `synthdid` validation only after repeated real use justifies moving them toward P0.
 
 ## Maintenance Rules
 

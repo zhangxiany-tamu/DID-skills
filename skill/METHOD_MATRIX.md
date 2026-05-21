@@ -43,6 +43,7 @@ The **MCP Tool** column names the `did_*` tool that covers this workflow when th
 | Generic balance or support tooling | `cobalt` and similar helpers | `out_of_scope` | `P2` | — | Mention inline when needed; do not build a full package-doc set. |
 | Event-study / sensitivity plotting | `ggplot2`, `ggdid`, `iplot` | `first_class` | `P0` | `did_plot` | Auto-picks event-study vs. HonestDiD robust-CI plot from the source handle. |
 | Narrative / session summary | (n/a) | `first_class` | `P0` | `did_report` | Markdown roll-up across every handle in the current session. |
+| Runtime health check | (n/a) | `first_class` | `P0` | `did_ping` | Verifies MCP server, R bridge, R version, and jsonlite round-trip before tool-aware workflow execution. |
 | Session / handle management | (n/a) | `first_class` | `P0` | `did_session` | list / inspect / drop / status; no code-gen analogue. |
 
 ## Operating Rules

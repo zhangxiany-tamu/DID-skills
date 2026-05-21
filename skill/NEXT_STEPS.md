@@ -12,15 +12,15 @@ This is the shortest maintainer handoff for the repo.
 
 ## Current Goal
 
-Close the remaining local blockers from the first lean validation pass while keeping the repo skill-first.
+Keep the P0 workflow validation repeatable while keeping the repo skill-first.
 
 ## Immediate Priorities
 
-1. Install `panelView` locally and re-run the Step 1 visualization path.
-2. Re-run the multilevel workflow on the actual Medicaid dataset when available.
-3. Exercise `did2s`, `didimputation`, `staggered`, and `DRDID` directly in a follow-up validation pass.
-4. Revisit the HonestDiD open-endpoint warning on `base_stagg` and determine whether it is grid-related, data-related, or resolved in a newer package version.
-5. Keep the `rgl.useNULL` workaround documented for DCDH-family packages unless a cleaner fix is confirmed.
+1. Run the Node 22 MCP checks after code changes: `npm run build`, `npm test`, `npm run smoke:all`, and `npm run smoke:recycle`.
+2. Run the full validation audits after workflow or package-doc changes: `npm run validate:real`, `node scripts/audit-mcp-matrix.mjs`, and `node ../skill/scripts/audit-skill-recipes.mjs`.
+3. Keep shared DID Examples preparation logic in `scripts/did-examples-lib.mjs` synchronized with both MCP and skill fallback audits.
+4. Keep HonestDiD open-endpoint warnings visible, but treat recurring small-cohort / singular-VCOV / rank-deficiency warnings as expected data-design warnings unless they cause failed estimates.
+5. Keep the `rgl.useNULL` workaround documented for DCDH-family packages unless a cleaner headless-runtime fix is confirmed.
 6. Keep `SKILL.md` thin; move new detail into step guides, not back into the entry point.
 
 ## Required Working Style
@@ -36,4 +36,5 @@ Close the remaining local blockers from the first lean validation pass while kee
 - the `P0` workflows in `VALIDATION_RUNBOOK.md` route correctly through the skill
 - any failures are bucketed and documented
 - version-tracking notes match the last validated cycle
+- MCP tool maps in `SKILL.md`, `METHOD_MATRIX.md`, root `README.md`, and `mcp/README.md` remain synchronized
 - `SKILL.md` remains a routing layer, not a second full manual

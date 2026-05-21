@@ -3,7 +3,6 @@
 //
 // ## Contents
 // - [Configuration](#configuration)
-// - [CSV helpers](#csv-helpers)
 // - [MCP client](#mcp-client)
 // - [Scenario preparation](#scenario-preparation)
 // - [Scenario runners](#scenario-runners)
@@ -14,7 +13,6 @@ import { spawn } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
-  readFileSync,
   writeFileSync,
 } from "node:fs";
 import {
@@ -23,13 +21,17 @@ import {
   resolve,
 } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  DEFAULT_EXAMPLES_DIR,
+  fmt,
+  prepareDidExampleDatasets,
+} from "../../scripts/did-examples-lib.mjs";
 
 // ## Configuration
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MCP_ROOT = resolve(__dirname, "..");
 const SERVER = resolve(MCP_ROOT, "dist", "index.js");
-const DEFAULT_EXAMPLES_DIR = "/Users/xianyangzhang/My Drive/DID Examples";
 const EXAMPLES_DIR = process.env.DID_EXAMPLES_DIR || DEFAULT_EXAMPLES_DIR;
 const OUTPUT_DIR = process.env.DID_MCP_VALIDATION_OUTPUT_DIR ||
   resolve(MCP_ROOT, "validation-output");
@@ -83,129 +85,6 @@ Options:
     }
   }
   return opts;
-}
-
-// ## CSV helpers
-
-function parseCsv(text) {
-  const rows = [];
-  let row = [];
-  let field = "";
-  let inQuotes = false;
-
-  for (let i = 0; i < text.length; i += 1) {
-    const ch = text[i];
-    const next = text[i + 1];
-
-    if (inQuotes) {
-      if (ch === '"' && next === '"') {
-        field += '"';
-        i += 1;
-      } else if (ch === '"') {
-        inQuotes = false;
-      } else {
-        field += ch;
-      }
-      continue;
-    }
-
-    if (ch === '"') {
-      inQuotes = true;
-    } else if (ch === ",") {
-      row.push(field);
-      field = "";
-    } else if (ch === "\n") {
-      row.push(field);
-      rows.push(row);
-      row = [];
-      field = "";
-    } else if (ch !== "\r") {
-      field += ch;
-    }
-  }
-
-  if (field.length > 0 || row.length > 0) {
-    row.push(field);
-    rows.push(row);
-  }
-
-  if (rows.length === 0) return [];
-  const header = rows[0];
-  return rows.slice(1).filter((r) => r.some((v) => v !== "")).map((r) => {
-    const obj = {};
-    for (let i = 0; i < header.length; i += 1) {
-      obj[header[i]] = r[i] ?? "";
-    }
-    return obj;
-  });
-}
-
-function readCsv(path) {
-  return parseCsv(readFileSync(path, "utf8"));
-}
-
-function csvEscape(value) {
-  const raw = value === null || value === undefined ? "" : String(value);
-  if (/[",\n\r]/.test(raw)) {
-    return `"${raw.replaceAll('"', '""')}"`;
-  }
-  return raw;
-}
-
-function writeCsv(path, rows, columns) {
-  const lines = [columns.map(csvEscape).join(",")];
-  for (const row of rows) {
-    lines.push(columns.map((col) => csvEscape(row[col])).join(","));
-  }
-  writeFileSync(path, `${lines.join("\n")}\n`);
-}
-
-function num(value) {
-  if (value === null || value === undefined) return NaN;
-  const s = String(value).trim();
-  if (s === "" || s.toUpperCase() === "NA" || s === ".") return NaN;
-  return Number(s);
-}
-
-function fmt(value, digits = 4) {
-  return typeof value === "number" && Number.isFinite(value)
-    ? value.toFixed(digits)
-    : "NA";
-}
-
-function uniqueSorted(values) {
-  return [...new Set(values)].sort((a, b) => String(a).localeCompare(String(b)));
-}
-
-function addMappedId(rows, sourceCol, targetCol) {
-  const values = uniqueSorted(rows.map((r) => r[sourceCol]));
-  const ids = new Map(values.map((v, i) => [v, String(i + 1)]));
-  for (const row of rows) {
-    row[targetCol] = ids.get(row[sourceCol]);
-  }
-}
-
-function countBy(rows, keyFn) {
-  const counts = new Map();
-  for (const row of rows) {
-    const key = keyFn(row);
-    counts.set(key, (counts.get(key) || 0) + 1);
-  }
-  return counts;
-}
-
-function weightedMean(rows, valueCol, weightCol) {
-  let numr = 0;
-  let denr = 0;
-  for (const row of rows) {
-    const value = num(row[valueCol]);
-    const weight = num(row[weightCol]);
-    if (Number.isFinite(value) && Number.isFinite(weight) && weight > 0) {
-      numr += value * weight;
-      denr += weight;
-    }
-  }
-  return denr > 0 ? numr / denr : NaN;
 }
 
 // ## MCP client
@@ -316,234 +195,12 @@ class McpClient {
 
 // ## Scenario preparation
 
-function prepareMedicaidInsurance(examplesDir) {
-  const source = join(examplesDir, "medicaid-insurance", "ehec_data.csv");
-  if (!existsSync(source)) throw new Error(`missing source CSV: ${source}`);
-  const rows = readCsv(source);
-  addMappedId(rows, "stfips", "state_id");
-  for (const row of rows) {
-    const g = num(row.yexp2);
-    const year = num(row.year);
-    row.yexp2_clean = Number.isFinite(g) ? String(g) : "";
-    row.treat_post = Number.isFinite(g) && year >= g ? "1" : "0";
-    row.dr_treated_2014 = g === 2014 ? "1" : "0";
-  }
-  const out = join(TMP_DIR, "medicaid-insurance.csv");
-  writeCsv(out, rows, [
-    "state_id", "stfips", "year", "dins", "yexp2_clean", "treat_post",
-    "dr_treated_2014", "W",
-  ]);
-  return {
-    source,
-    path: out,
-    loadArgs: {
-      path: out,
-      id_var: "state_id",
-      time_var: "year",
-      treat_timing_var: "yexp2_clean",
-      treat_var: "treat_post",
-      outcome_var: "dins",
-    },
-  };
-}
-
-function prepareMedicaidMortality(examplesDir) {
-  const source = join(examplesDir, "medicaid-mortality", "county_mortality_data.csv");
-  if (!existsSync(source)) throw new Error(`missing source CSV: ${source}`);
-  const excluded = new Set(["10", "11", "25", "36", "50"]);
-  const countyRows = readCsv(source).filter((row) => {
-    return !excluded.has(String(num(row.stfips))) &&
-      Number.isFinite(num(row.crude_rate_20_64));
-  });
-
-  const groups = new Map();
-  for (const row of countyRows) {
-    const key = `${row.stfips}::${row.year}`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(row);
-  }
-
-  const rows = [];
-  for (const groupRows of groups.values()) {
-    const first = groupRows[0];
-    const yaca = num(first.yaca);
-    const year = num(first.year);
-    const inSampleG = [2014, 2015, 2016, 2019].includes(yaca) ? yaca : NaN;
-    const pop = groupRows.reduce((sum, row) => {
-      const value = num(row.population_20_64);
-      return sum + (Number.isFinite(value) ? value : 0);
-    }, 0);
-    rows.push({
-      state_id: String(first.stfips),
-      state: first.state,
-      year: String(year),
-      mortality_rate: String(weightedMean(groupRows, "crude_rate_20_64", "population_20_64")),
-      first_treat: Number.isFinite(inSampleG) ? String(inSampleG) : "",
-      treat_post: Number.isFinite(inSampleG) && year >= inSampleG ? "1" : "0",
-      pop_weight: String(pop),
-    });
-  }
-  rows.sort((a, b) => Number(a.state_id) - Number(b.state_id) || Number(a.year) - Number(b.year));
-  const out = join(TMP_DIR, "medicaid-mortality.csv");
-  writeCsv(out, rows, [
-    "state_id", "state", "year", "mortality_rate", "first_treat",
-    "treat_post", "pop_weight",
-  ]);
-  return {
-    source,
-    path: out,
-    loadArgs: {
-      path: out,
-      id_var: "state_id",
-      time_var: "year",
-      treat_timing_var: "first_treat",
-      treat_var: "treat_post",
-      outcome_var: "mortality_rate",
-    },
-  };
-}
-
-function prepareTeacherBargaining(examplesDir) {
-  const source = join(examplesDir, "teacher-bargaining", "paglayan_dataset.csv");
-  if (!existsSync(source)) throw new Error(`missing source CSV: ${source}`);
-  const rows = readCsv(source).filter((row) => {
-    const year = num(row.year);
-    return year >= 1959 && year <= 1990 && Number.isFinite(num(row.lnppexpend));
-  });
-  addMappedId(rows, "State", "state_id");
-  for (const row of rows) {
-    const g = num(row.YearCBrequired);
-    const year = num(row.year);
-    row.g_clean = Number.isFinite(g) ? String(g) : "";
-    row.treat_post = Number.isFinite(g) && year >= g ? "1" : "0";
-  }
-  const out = join(TMP_DIR, "teacher-bargaining.csv");
-  writeCsv(out, rows, [
-    "state_id", "State", "year", "lnppexpend", "g_clean", "treat_post",
-  ]);
-  return {
-    source,
-    path: out,
-    loadArgs: {
-      path: out,
-      id_var: "state_id",
-      time_var: "year",
-      treat_timing_var: "g_clean",
-      treat_var: "treat_post",
-      outcome_var: "lnppexpend",
-    },
-  };
-}
-
-function prepareDivorceLaws(examplesDir) {
-  const source = join(examplesDir, "divorce-laws", "divorce_data.csv");
-  if (!existsSync(source)) throw new Error(`missing source CSV: ${source}`);
-  const raw = readCsv(source).filter((row) => {
-    const year = num(row.year);
-    return !["AK", "OK"].includes(row.st) &&
-      year >= 1968 && year <= 1985 &&
-      Number.isFinite(num(row.div_rate));
-  });
-  const nYears = uniqueSorted(raw.map((row) => row.year)).length;
-  const countsByState = countBy(raw, (row) => row.st);
-  const completeStates = new Set([...countsByState.entries()]
-    .filter(([, count]) => count === nYears)
-    .map(([state]) => state));
-  const rows = raw.filter((row) => completeStates.has(row.st));
-  addMappedId(rows, "st", "state_id");
-  for (const row of rows) {
-    const g = num(row.lfdivlaw);
-    const year = num(row.year);
-    row.g_clean = g === 2000 ? "" : String(g);
-    row.treat_post = g !== 2000 && year >= g ? "1" : "0";
-  }
-  const out = join(TMP_DIR, "divorce-laws.csv");
-  writeCsv(out, rows, [
-    "state_id", "st", "year", "div_rate", "g_clean", "treat_post", "stpop",
-  ]);
-  return {
-    source,
-    path: out,
-    loadArgs: {
-      path: out,
-      id_var: "state_id",
-      time_var: "year",
-      treat_timing_var: "g_clean",
-      treat_var: "treat_post",
-      outcome_var: "div_rate",
-    },
-  };
-}
-
-function prepareSentencingLaws(examplesDir) {
-  const source = join(examplesDir, "sentencing-laws", "sentencing_data.csv");
-  if (!existsSync(source)) throw new Error(`missing source CSV: ${source}`);
-  const complete = readCsv(source).filter((row) => Number.isFinite(num(row.lnpcrrobgun)));
-  const allYears = uniqueSorted(complete.map((row) => row.year));
-  const countsByState = countBy(complete, (row) => row.state_fips);
-  const fullStates = new Set([...countsByState.entries()]
-    .filter(([, count]) => count === allYears.length)
-    .map(([state]) => state));
-  const rows = complete.filter((row) => fullStates.has(row.state_fips));
-  for (const row of rows) {
-    const adoption = num(row.treatment_year);
-    const year = num(row.year);
-    const g = adoption > 0 ? adoption + 1 : NaN;
-    row.g_clean = Number.isFinite(g) ? String(g) : "";
-    row.treat_absorbing = Number.isFinite(g) && year >= g ? "1" : "0";
-  }
-  const out = join(TMP_DIR, "sentencing-laws.csv");
-  writeCsv(out, rows, [
-    "state_fips", "state_name", "year", "lnpcrrobgun", "g_clean",
-    "treat_absorbing",
-  ]);
-  return {
-    source,
-    path: out,
-    loadArgs: {
-      path: out,
-      id_var: "state_fips",
-      time_var: "year",
-      treat_timing_var: "g_clean",
-      treat_var: "treat_absorbing",
-      outcome_var: "lnpcrrobgun",
-    },
-  };
-}
-
-function prepareBankDeregulation(examplesDir) {
-  const source = join(examplesDir, "bank-deregulation", "bank_deregulation_data.csv");
-  if (!existsSync(source)) throw new Error(`missing source CSV: ${source}`);
-  const raw = readCsv(source);
-  const rows = raw.filter((row) => {
-    const year = num(row.wrkyr);
-    const g = num(row.branch_reform);
-    const gini = num(row.gini);
-    return year <= 1998 && g > 1976 && Number.isFinite(gini) && gini > 0;
-  });
-  for (const row of rows) {
-    const g = num(row.branch_reform);
-    const year = num(row.wrkyr);
-    row.branch_g = g > 1998 ? "0" : String(g);
-    row.treat_intra = g <= 1998 && year >= g ? "1" : "0";
-    row.log_gini = String(Math.log(num(row.gini)));
-  }
-  const out = join(TMP_DIR, "bank-deregulation.csv");
-  writeCsv(out, rows, [
-    "statefip", "state", "wrkyr", "log_gini", "branch_g", "treat_intra",
-  ]);
-  return {
-    source,
-    path: out,
-    loadArgs: {
-      path: out,
-      id_var: "statefip",
-      time_var: "wrkyr",
-      treat_timing_var: "branch_g",
-      treat_var: "treat_intra",
-      outcome_var: "log_gini",
-    },
-  };
+function prepareScenarioDataset(examplesDir, name) {
+  return prepareDidExampleDatasets({
+    examplesDir,
+    tmpDir: TMP_DIR,
+    names: [name],
+  })[0];
 }
 
 // ## Scenario runners
@@ -1235,42 +892,42 @@ async function main() {
     makeScenario(
       "medicaid-insurance",
       "Medicaid Insurance Coverage",
-      prepareMedicaidInsurance,
+      (examplesDir) => prepareScenarioDataset(examplesDir, "medicaid-insurance"),
       "positive insurance-coverage ATT, minimal/mild TWFE risk",
       "Uses the supplied state-year panel; maps state identifiers, preserves survey weights, and derives absorbing post-expansion treatment from first expansion year.",
     ),
     makeScenario(
       "medicaid-mortality",
       "Medicaid Mortality",
-      prepareMedicaidMortality,
+      (examplesDir) => prepareScenarioDataset(examplesDir, "medicaid-mortality"),
       "finite mortality estimates, flat-to-sensitive inference, minimal/mild TWFE risk",
       "Aggregates county mortality to a state-year validation panel with population-weighted mortality rates, matching the MCP's panel scale while preserving expansion timing.",
     ),
     makeScenario(
       "teacher-bargaining",
       "Teacher Collective Bargaining",
-      prepareTeacherBargaining,
+      (examplesDir) => prepareScenarioDataset(examplesDir, "teacher-bargaining"),
       "qualitatively null spending effect with non-minimal TWFE risk",
       "Uses the 1959-1990 state-year panel with finite log spending outcomes and absorbing collective-bargaining treatment timing.",
     ),
     makeScenario(
       "divorce-laws",
       "Unilateral Divorce Laws",
-      prepareDivorceLaws,
+      (examplesDir) => prepareScenarioDataset(examplesDir, "divorce-laws"),
       "finite dynamic divorce-rate estimates and meaningful TWFE risk",
       "Uses a balanced 1968-1985 state-year subset, excludes AK and OK, and treats the sentinel never-treated code as missing treatment timing.",
     ),
     makeScenario(
       "sentencing-laws",
       "Sentencing Enhancements",
-      prepareSentencingLaws,
+      (examplesDir) => prepareScenarioDataset(examplesDir, "sentencing-laws"),
       "negative or near-zero gun-robbery ATT with minimal/mild TWFE risk",
       "Uses complete-state rows with finite log gun-robbery outcomes and converts the source adoption year into an absorbing first-treated year.",
     ),
     makeScenario(
       "bank-deregulation",
       "Bank Deregulation",
-      prepareBankDeregulation,
+      (examplesDir) => prepareScenarioDataset(examplesDir, "bank-deregulation"),
       "finite robust estimates and meaningful TWFE risk",
       "Uses a Baker-style 1977-1998 state-year sample with positive Gini outcomes, log-transforms inequality, and treats post-1998 adopters as never treated.",
     ),
