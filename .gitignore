@@ -50,6 +50,10 @@ mcp/validation-output/
 # === Skill runtime artifacts ===
 skill/validation-output/
 
+# === Workflow runtime artifacts ===
+# Per-run analysis output written by the did-analysis workflow.
+analyses/
+
 # === R build artifacts (monorepo-wide) ===
 *.Rproj.user
 .Rhistory

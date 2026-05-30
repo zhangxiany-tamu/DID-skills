@@ -1,12 +1,13 @@
 # DID
 
-**Modern Difference-in-Differences, agent-driven.** A Claude Code skill and companion MCP server that guide an AI agent through the Roth–Sant'Anna–Bilinski-Poe 5-step DiD workflow on your data — treatment-structure profiling, TWFE diagnostics, heterogeneity-robust estimation, pre-trends power, and HonestDiD sensitivity — using the canonical R tooling (`did`, `fixest`, `didimputation`, `did2s`, `staggered`, `bacondecomp`, `TwoWayFEWeights`, `HonestDiD`, `pretrends`, `DRDID`).
+**Modern Difference-in-Differences, agent-driven.** A Claude Code skill, a companion MCP server, and a multi-agent workflow that guide an AI agent through the Roth–Sant'Anna–Bilinski-Poe 5-step DiD workflow on your data — treatment-structure profiling, TWFE diagnostics, heterogeneity-robust estimation, pre-trends power, and HonestDiD sensitivity — using the canonical R tooling (`did`, `fixest`, `didimputation`, `did2s`, `staggered`, `bacondecomp`, `TwoWayFEWeights`, `HonestDiD`, `pretrends`, `DRDID`).
 
 ## Contents
 
 - [What's in the repo](#whats-in-the-repo)
 - [Install](#install)
 - [Quick start](#quick-start)
+- [Run the full analysis as a workflow](#run-the-full-analysis-as-a-workflow)
 - [MCP tool surface](#mcp-tool-surface)
 - [Use with other agents](#use-with-other-agents)
 - [How the skill and MCP interact](#how-the-skill-and-mcp-interact)
@@ -21,15 +22,17 @@
 |---|---|
 | `skill/` | Installable `did-analysis` Claude Code skill — pure markdown. Contains the workflow router, 5 step guides, per-package references, failure taxonomy, and validation runbook. |
 | `mcp/` | Optional companion `did-mcp` server — TypeScript MCP server + persistent R subprocess. Exposes 16 `did_*` tools that execute the skill's workflow end-to-end. |
+| `workflow/` | The `did-analysis` [dynamic workflow](https://code.claude.com/docs/en/workflows) — a single script that orchestrates the full 5-step analysis across many subagents, with statistical + economic + artifact-QA review at every step and an audience-tailored report. Invoked as `/did-analysis`. See [`workflow/README.md`](workflow/README.md). |
 | `scripts/did-examples-lib.mjs` | Shared validation-panel preparation helpers for MCP and skill fallback audits. |
 | `AGENTS.md` | Monorepo conventions and maintainer read order. |
 | `install.sh` | Symlinks `skill/` into `~/.claude/skills/did-analysis/` and optionally builds the MCP. |
 | `MIGRATION.md` | Upgrade notes for users coming from the flat-layout `DID-skills` v1. |
 
-The two halves work independently or together:
+The parts work independently or together:
 
 - **Skill only**: install `skill/`; the agent reads the docs and writes R code for you to run.
 - **Skill + MCP**: install both; the agent calls `did_*` tools to execute the workflow and returns interpreted results, event-study plots, and a narrative markdown report.
+- **Workflow**: install `workflow/`; run `/did-analysis` to drive the whole 5-step procedure as a reviewed, multi-agent pipeline that writes its outputs and a report to disk. It uses the `did_*` tools when the MCP is registered and falls back to the skill's R recipes otherwise.
 
 ## Install
 
@@ -39,7 +42,7 @@ cd DID
 ./install.sh
 ```
 
-The installer symlinks `skill/` into `~/.claude/skills/did-analysis/` and, if you say yes, runs `npm install && npm run build` inside `mcp/`.
+The installer symlinks `skill/` into `~/.claude/skills/did-analysis/`, links `workflow/did-analysis.ts` into `~/.claude/workflows/` (invocable as `/did-analysis`), and, if you say yes, runs `npm install && npm run build` inside `mcp/`.
 
 **Skill-only install (no MCP):**
 
@@ -63,6 +66,21 @@ sensitivity bounds. Flag any estimator disagreement.
 With the MCP registered, Claude will call `did_ping` → `did_load_panel` → `did_check_panel` → `did_profile_design` → `did_recode_never_treated` / `did_plot_rollout` as needed → `did_diagnose_twfe` → `did_estimate` / `did_compare_estimators` → `did_extract_event_study` → `did_power_analysis` → `did_honest_sensitivity` → `did_plot` → `did_report`, returning a markdown narrative with ATTs, event-study coefficients, breakdown M̄, and a flagged estimator-agreement table.
 
 Without the MCP, Claude reads `skill/SKILL.md` + the step guides and produces runnable R code for the same pipeline.
+
+## Run the full analysis as a workflow
+
+For a hands-off, reviewed run, use the `did-analysis` [dynamic workflow](https://code.claude.com/docs/en/workflows) instead of a conversational request:
+
+```
+Run the did-analysis workflow with args: {
+  "data": "data/expansion.csv",
+  "idVar": "state", "timeVar": "year", "outcomeVar": "emp",
+  "gvar": "treatment_year", "neverTreatedSourceCoding": "0",
+  "audience": "economists"
+}
+```
+
+It scans the R packages for updates (report-only), runs all 5 steps with three independent reviewers per step (statistical, economic, artifact-QA) looping until no blocking issue remains, audits every generated CSV/figure/table for consistency, then writes an audience-tailored `report.md` (plus `implementation.json` and all intermediates) under `analyses/<slug>/`. Watch progress with `/workflows`. Full details, args, and outputs are in [`workflow/README.md`](workflow/README.md).
 
 ## MCP tool surface
 

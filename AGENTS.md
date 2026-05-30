@@ -1,7 +1,7 @@
 # Project: DID
 
 This is a monorepo for modern Difference-in-Differences workflows in R. It has
-two coordinated parts:
+three coordinated parts:
 
 - `skill/` — the installable `did-analysis` skill. It is pure markdown and
   contains the runtime router, workflow guides, package docs, and maintainer
@@ -9,6 +9,11 @@ two coordinated parts:
 - `mcp/` — the optional companion `did-mcp` server. It exposes the skill's
   core workflow as agent-callable tools backed by a TypeScript MCP server and a
   persistent R subprocess.
+- `workflow/` — the `did-analysis` dynamic workflow (`workflow/did-analysis.ts`,
+  invoked as `/did-analysis`). A single plain-JS orchestration script that runs
+  the full 5-step procedure across many subagents, with statistical + economic +
+  artifact-QA review at every step and an audience-tailored report. It prefers
+  the `did_*` MCP tools when registered and falls back to the skill's R recipes.
 
 ## Contents
 
@@ -45,10 +50,14 @@ two coordinated parts:
 - `skill/NEXT_STEPS.md` — shortest maintainer handoff.
 - `mcp/` — `did-mcp` TypeScript/R implementation, smoke tests, and MCP config
   example.
+- `workflow/did-analysis.ts` — the `did-analysis` dynamic workflow script
+  (plain JS, `.ts` extension); `workflow/README.md` documents its args, outputs,
+  and agent topology.
 - `scripts/did-examples-lib.mjs` — shared DID Examples CSV preparation helpers
   used by MCP and skill validation audits.
-- `install.sh` — symlinks `skill/` into `~/.claude/skills/did-analysis/` and
-  optionally builds `mcp/`.
+- `install.sh` — symlinks `skill/` into `~/.claude/skills/did-analysis/`, links
+  `workflow/did-analysis.ts` into `~/.claude/workflows/`, and optionally builds
+  `mcp/`.
 
 ## Maintainer Read Order
 
@@ -73,6 +82,12 @@ two coordinated parts:
 - Do not add a new package without updating `skill/SKILL.md`, the relevant step
   guide, `skill/METHOD_MATRIX.md`, and the full 3-file package doc set when
   appropriate.
+- When a step guide, estimator, never-treated coding, or tracked package changes,
+  keep `workflow/did-analysis.ts` in sync — its `STEP_GUIDE` paths, per-estimator
+  recodings (in the SHARED block and the Step 3 prompt), and `PACKAGES` list must
+  match the skill. Keep `did-analysis.ts` plain-JS-valid (no TypeScript
+  annotations; no `Date.now()`/`Math.random()`/filesystem access in the script
+  body — only its subagents do I/O).
 - Files over 100 lines must have a `## Contents` section with markdown-linked
   anchors.
 - Prefer built-in package datasets or standard package examples in docs and
